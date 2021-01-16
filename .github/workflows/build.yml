@@ -75,7 +75,7 @@ jobs:
         cd host/build
         makensis platform/Windows/installer.nsi
 
-  host-windows-native:
+  host-windows-native-mingw:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v1
@@ -90,6 +90,28 @@ jobs:
       run: |
         cd host\build
         mingw32-make -j2
+    - name: Build Windows host installer
+      run: |
+        cd host\build
+        makensis platform\Windows\installer.nsi
+
+  host-windows-native-vc:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: recursive
+    - name: Configure Windows host for Visual C++
+      run: |
+        mkdir host\build
+        cd host\build
+        cmake -G "Visual Studio 16 2019" ..
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.0.2
+    - name: Build Windows host with Visual C++
+      run: |
+        cd host\build
+        msbuild looking-glass-host.sln "-maxcpucount:$([Environment]::ProcessorCount)"
     - name: Build Windows host installer
       run: |
         cd host\build
