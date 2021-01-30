@@ -110,5 +110,9 @@ void app_releaseKeybind(KeybindHandle * handle);
  */
 void app_releaseAllKeybinds(void);
 
+/**
+ * Toggles the display of the help message.
+ */
+void app_toggleHelp(void);
 
 #endif

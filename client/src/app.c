@@ -28,6 +28,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include "kb.h"
 
 #include "common/debug.h"
+#include "dynamic/key_bindings.h"
 
 #include <stdarg.h>
 #include <math.h>
@@ -491,4 +492,12 @@ void app_releaseAllKeybinds(void)
       free(g_state.bindings[i]);
       g_state.bindings[i] = NULL;
     }
+}
+
+void app_toggleHelp()
+{
+  g_state.showHelp = !g_state.showHelp;
+
+  const char * help_str = g_state.showHelp ? b_key_bindings : NULL;
+  g_state.lgr->on_help(g_state.lgrData, help_str);
 }

@@ -76,6 +76,11 @@ static void bind_quit(int sc, void * opaque)
   g_state.state = APP_STATE_SHUTDOWN;
 }
 
+static void bind_help(int sc, void * opaque)
+{
+  app_toggleHelp();
+}
+
 static void bind_mouseSens(int sc, void * opaque)
 {
   bool inc = (bool)opaque;
@@ -124,10 +129,11 @@ static void bind_passthrough(int sc, void * opaque)
 
 void keybind_register(void)
 {
-  app_registerKeybind(KEY_F, bind_fullscreen, NULL);
-  app_registerKeybind(KEY_V, bind_video     , NULL);
-  app_registerKeybind(KEY_R, bind_rotate    , NULL);
-  app_registerKeybind(KEY_Q, bind_quit      , NULL);
+  app_registerKeybind(KEY_F    , bind_fullscreen, NULL);
+  app_registerKeybind(KEY_V    , bind_video     , NULL);
+  app_registerKeybind(KEY_R    , bind_rotate    , NULL);
+  app_registerKeybind(KEY_Q    , bind_quit      , NULL);
+  app_registerKeybind(KEY_SLASH, bind_help      , NULL);
 
   if (g_params.useSpiceInput)
   {

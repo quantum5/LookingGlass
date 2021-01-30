@@ -51,6 +51,7 @@ struct AppState
   int                  escapeAction;
   KeybindHandle        bindings[KEY_MAX];
   bool                 keyDown[KEY_MAX];
+  bool                 showHelp;
 
   bool                 haveSrcSize;
   struct Point         windowPos;
