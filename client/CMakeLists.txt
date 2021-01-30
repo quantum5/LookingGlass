@@ -89,6 +89,20 @@ add_custom_command(
 		${PROJECT_TOP}/version.cmake
 )
 
+add_custom_command(
+	OUTPUT ${CMAKE_BINARY_DIR}/key_bindings.txt
+	COMMAND	${PROJECT_SOURCE_DIR}/make-keybindings.sh ${PROJECT_SOURCE_DIR}/README.md ${CMAKE_BINARY_DIR}/key_bindings.txt
+	DEPENDS ${PROJECT_SOURCE_DIR}/make-keybindings.sh ${PROJECT_SOURCE_DIR}/README.md
+)
+
+include(MakeObject)
+make_single_object(
+	${CMAKE_BINARY_DIR}/key_bindings.txt
+	key_bindings
+	${CMAKE_BINARY_DIR}/src/key_bindings.o
+	${CMAKE_BINARY_DIR}/include/dynamic/key_bindings.h
+)
+
 include_directories(
 	${PROJECT_SOURCE_DIR}/include
 	${CMAKE_BINARY_DIR}/include
@@ -106,6 +120,7 @@ link_libraries(
 
 set(SOURCES
 	${CMAKE_BINARY_DIR}/version.c
+	${CMAKE_BINARY_DIR}/src/key_bindings.o
 	src/main.c
 	src/core.c
 	src/app.c
