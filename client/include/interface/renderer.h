@@ -39,7 +39,8 @@ Place, Suite 330, Boston, MA 02111-1307 USA
    (x)->on_show_fps    && \
    (x)->render_startup && \
    (x)->render         && \
-   (x)->update_fps)
+   (x)->update_fps     && \
+   (x)->wait_for_dma)
 
 typedef struct LG_RendererParams
 {
@@ -120,6 +121,7 @@ typedef void         (* LG_RendererOnShowFPS    )(void * opaque, bool showFPS);
 typedef bool         (* LG_RendererRenderStartup)(void * opaque);
 typedef bool         (* LG_RendererRender       )(void * opaque, LG_RendererRotate rotate);
 typedef void         (* LG_RendererUpdateFPS    )(void * opaque, const float avgUPS, const float avgFPS);
+typedef void         (* LG_RendererWaitForDMA   )(void * opaque, int dmaFD);
 
 typedef struct LG_Renderer
 {
@@ -142,5 +144,6 @@ typedef struct LG_Renderer
   LG_RendererRenderStartup  render_startup;
   LG_RendererRender         render;
   LG_RendererUpdateFPS      update_fps;
+  LG_RendererWaitForDMA     wait_for_dma;
 }
 LG_Renderer;

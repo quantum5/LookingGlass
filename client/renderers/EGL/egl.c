@@ -749,6 +749,7 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
 
   egl_fps_render(this->fps, this->screenScaleX, this->screenScaleY);
   egl_help_render(this->help, this->screenScaleX, this->screenScaleY);
+  egl_desktop_sync_import(this->desktop);
   app_eglSwapBuffers(this->display, this->surface);
   return true;
 }
@@ -757,6 +758,12 @@ void egl_update_fps(void * opaque, const float avgUPS, const float avgFPS)
 {
   struct Inst * this = (struct Inst *)opaque;
   egl_fps_update(this->fps, avgUPS, avgFPS);
+}
+
+void egl_wait_for_dma(void * opaque, int dmaFD)
+{
+  struct Inst * this = (struct Inst *)opaque;
+  egl_desktop_wait_for_dma(this->desktop, dmaFD);
 }
 
 struct LG_Renderer LGR_EGL =
@@ -778,5 +785,6 @@ struct LG_Renderer LGR_EGL =
   .on_show_fps     = egl_on_show_fps,
   .render_startup  = egl_render_startup,
   .render          = egl_render,
-  .update_fps      = egl_update_fps
+  .update_fps      = egl_update_fps,
+  .wait_for_dma    = egl_wait_for_dma,
 };

@@ -240,6 +240,16 @@ bool egl_desktop_update(EGL_Desktop * desktop, const FrameBuffer * frame, int dm
   return true;
 }
 
+void egl_desktop_sync_import(EGL_Desktop * desktop)
+{
+  egl_texture_sync_import(desktop->texture);
+}
+
+void egl_desktop_wait_for_dma(EGL_Desktop * desktop, int dmaFD)
+{
+  egl_texture_wait_for_dma(desktop->texture, dmaFD);
+}
+
 bool egl_desktop_render(EGL_Desktop * desktop, const float x, const float y,
     const float scaleX, const float scaleY, const bool nearest,
     LG_RendererRotate rotate)

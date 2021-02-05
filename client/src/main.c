@@ -334,7 +334,8 @@ int main_frameThread(void * unused)
   };
 
   LGMP_STATUS      status;
-  PLGMPClientQueue queue;
+  PLGMPClient      dmaClient;
+  PLGMPClientQueue queue, dmaQueue;
 
   uint32_t          formatVer = 0;
   size_t            dataSize  = 0;
@@ -346,6 +347,8 @@ int main_frameThread(void * unused)
     ivshmemHasDMA(&g_state.shm) &&
     g_state.lgr->supports &&
     g_state.lgr->supports(g_state.lgrData, LG_SUPPORTS_DMABUF);
+  int lastDmaFd = -1;
+  void *skipUntilDmaMem = NULL;
 
   if (useDMA)
     DEBUG_INFO("Using DMA buffer support");
@@ -370,6 +373,24 @@ int main_frameThread(void * unused)
     DEBUG_ERROR("lgmpClientSubscribe Failed: %s", lgmpStatusString(status));
     g_state.state = APP_STATE_SHUTDOWN;
     break;
+  }
+
+  if (useDMA)
+  {
+    if ((status = lgmpClientInit(g_state.shm.mem, g_state.shm.size, &dmaClient)) != LGMP_OK)
+    {
+      DEBUG_ERROR("lgmpClientInit Failed: %s", lgmpStatusString(status));
+      g_state.state = APP_STATE_SHUTDOWN;
+    }
+    else
+    {
+      status = lgmpClientSubscribe(dmaClient, LGMP_Q_FRAME, &dmaQueue);
+      if (status != LGMP_OK)
+      {
+        DEBUG_ERROR("DMA lgmpClientSubscribe Failed: %s", lgmpStatusString(status));
+        g_state.state = APP_STATE_SHUTDOWN;
+      }
+    }
   }
 
   while(g_state.state == APP_STATE_RUNNING && !g_state.stopVideo)
@@ -547,12 +568,90 @@ int main_frameThread(void * unused)
       g_state.autoIdleInhibitState = frame->blockScreensaver;
     }
 
+    if (useDMA)
+    {
+      if (lastDmaFd != -1)
+      {
+        g_state.lgr->wait_for_dma(g_state.lgrData, lastDmaFd);
+        lgmpClientMessageDone(dmaQueue);
+      }
+
+      if (!skipUntilDmaMem)
+      {
+        LGMPMessage dmaMessage;
+        switch ((status = lgmpClientProcess(dmaQueue, &dmaMessage)))
+        {
+          case LGMP_OK:
+            if (lastDmaFd >= 0 || dmaMessage.mem == msg.mem)
+              lastDmaFd = dma->fd;
+            else
+              lgmpClientMessageDone(dmaQueue);
+            break;
+
+          case LGMP_ERR_QUEUE_EMPTY:
+            // This is fine, the main queue will eventually catch up.
+            break;
+
+          case LGMP_ERR_QUEUE_TIMEOUT:
+            // This is sort of normal and happens when there are no frame updates.
+            lgmpClientUnsubscribe(&dmaQueue);
+            if ((status = lgmpClientSubscribe(dmaClient, LGMP_Q_FRAME, &dmaQueue)) != LGMP_OK)
+            {
+              DEBUG_ERROR("DMA lgmpClientSubscribe Failed: %s", lgmpStatusString(status));
+              g_state.state = APP_STATE_RESTART;
+              goto fail;
+            }
+
+            lastDmaFd = -1;
+            switch ((status = lgmpClientProcess(dmaQueue, &dmaMessage)))
+            {
+              case LGMP_OK:
+                if (dmaMessage.mem == msg.mem)
+                {
+                  skipUntilDmaMem = NULL;
+                  lastDmaFd = dma->fd;
+                }
+                else
+                { // The queue must have advanced while we are processing messages
+                  skipUntilDmaMem = dmaMessage.mem;
+                  lgmpClientMessageDone(dmaQueue);
+                  break;
+                }
+                break;
+
+              case LGMP_ERR_QUEUE_EMPTY:
+                skipUntilDmaMem = NULL;
+                break;
+
+              default:
+                DEBUG_ERROR("Failed to advance DMA message queue: %s", lgmpStatusString(status));
+                g_state.state = APP_STATE_RESTART;
+                goto fail;
+            }
+            break;
+
+          default:
+            DEBUG_ERROR("Failed to advance DMA message queue: %s", lgmpStatusString(status));
+            g_state.state = APP_STATE_RESTART;
+            goto fail;
+        }
+      }
+      else if (skipUntilDmaMem == msg.mem)
+        skipUntilDmaMem = NULL;
+    }
+
     atomic_fetch_add_explicit(&g_state.frameCount, 1, memory_order_relaxed);
     lgSignalEvent(e_frame);
     lgmpClientMessageDone(queue);
   }
 
+fail:
   lgmpClientUnsubscribe(&queue);
+  if (useDMA)
+  {
+    lgmpClientUnsubscribe(&dmaQueue);
+    lgmpClientFree(&dmaClient);
+  }
   g_state.lgr->on_restart(g_state.lgrData);
 
   if (useDMA)

@@ -739,6 +739,10 @@ void opengl_update_fps(void * opaque, const float avgUPS, const float avgFPS)
   glEndList();
 }
 
+void opengl_wait_for_dma(void * opaque, int dmaFD)
+{
+}
+
 void draw_torus(float x, float y, float inner, float outer, unsigned int pts)
 {
   glBegin(GL_QUAD_STRIP);
@@ -852,7 +856,8 @@ const LG_Renderer LGR_OpenGL =
   .on_show_fps     = opengl_on_show_fps,
   .render_startup  = opengl_render_startup,
   .render          = opengl_render,
-  .update_fps      = opengl_update_fps
+  .update_fps      = opengl_update_fps,
+  .wait_for_dma    = opengl_wait_for_dma,
 };
 
 static bool _check_gl_error(unsigned int line, const char * name)

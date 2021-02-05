@@ -51,6 +51,8 @@ bool               egl_texture_setup  (EGL_Texture * texture, enum EGL_PixelForm
 bool               egl_texture_update (EGL_Texture * texture, const uint8_t * buffer);
 bool               egl_texture_update_from_frame(EGL_Texture * texture, const FrameBuffer * frame);
 bool               egl_texture_update_from_dma  (EGL_Texture * texture, const FrameBuffer * frmame, const int dmaFd);
+void               egl_texture_sync_import      (EGL_Texture * texture);
+void               egl_texture_wait_for_dma     (EGL_Texture * texture, int dmaFD);
 enum EGL_TexStatus egl_texture_process(EGL_Texture * texture);
 enum EGL_TexStatus egl_texture_bind          (EGL_Texture * texture);
 int                egl_texture_count         (EGL_Texture * texture);
