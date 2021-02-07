@@ -89,6 +89,7 @@ struct EGL_Texture
 
   GLuint dmaFBO;
   GLuint dmaTex;
+  bool   dmaFilled;
 };
 
 bool egl_texture_init(EGL_Texture ** texture, EGLDisplay * display)
@@ -269,6 +270,7 @@ bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_
       glDeleteTextures(1, &texture->dmaTex);
     glGenFramebuffers(1, &texture->dmaFBO);
     glGenTextures(1, &texture->dmaTex);
+    texture->dmaFilled = false;
     return true;
   }
 
@@ -451,11 +453,17 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
   glBindTexture(GL_TEXTURE_2D, texture->dmaTex);
   g_egl_dynProcs.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
 
-  glBindFramebuffer(GL_FRAMEBUFFER, texture->dmaFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->dmaTex, 0);
+  if (texture->dmaFilled)
+    glCopyImageSubData(GL_TEXTURE_2D, texture->dmaTex, 0, 0, 0, 0, GL_TEXTURE_2D, texture->tex, 0, 0, 0, 0,
+        texture->width, texture->height, 1);
+  else
+  {
+    glBindFramebuffer(GL_FRAMEBUFFER, texture->dmaFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->dmaTex, 0);
 
-  glBindTexture(GL_TEXTURE_2D, texture->tex);
-  glCopyTexImage2D(GL_TEXTURE_2D, 0, texture->intFormat, 0, 0, texture->width, texture->height, 0);
+    glBindTexture(GL_TEXTURE_2D, texture->tex);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, texture->intFormat, 0, 0, texture->width, texture->height, 0);
+  }
 
   GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   glFlush();
