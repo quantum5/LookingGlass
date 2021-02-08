@@ -57,6 +57,15 @@ struct BufferState
   _Atomic(uint8_t) w, u, s, d;
 };
 
+struct DMAState
+{
+  int fd;
+  EGLImage image;
+  GLuint tex[2];
+  GLuint fbo;
+  GLsync sync;
+};
+
 struct EGL_Texture
 {
   EGLDisplay * display;
@@ -82,13 +91,7 @@ struct EGL_Texture
 
   size_t dmaImageCount;
   size_t dmaImageUsed;
-  struct {
-    int fd;
-    EGLImage image;
-  } *dmaImages;
-
-  GLuint dmaFBO;
-  GLuint dmaTex;
+  struct DMAState *dmaImages;
 };
 
 bool egl_texture_init(EGL_Texture ** texture, EGLDisplay * display)
@@ -132,7 +135,11 @@ void egl_texture_free(EGL_Texture ** texture)
   glDeleteTextures(1, &(*texture)->tex);
 
   for (size_t i = 0; i < (*texture)->dmaImageUsed; ++i)
+  {
     eglDestroyImage((*texture)->display, (*texture)->dmaImages[i].image);
+    glDeleteTextures(2, (*texture)->dmaImages[i].tex);
+    glDeleteFramebuffers(1, &(*texture)->dmaImages[i].fbo);
+  }
   free((*texture)->dmaImages);
 
   free(*texture);
@@ -176,6 +183,8 @@ static void egl_texture_unmap(EGL_Texture * texture, uint8_t i)
 
 bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA)
 {
+  bool wasDMA = texture->dma;
+
   if (texture->streaming && !useDMA)
   {
     for(int i = 0; i < texture->bufferCount; ++i)
@@ -248,10 +257,6 @@ bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_
 
   texture->pitch = stride / texture->bpp;
 
-  if (texture->tex)
-    glDeleteTextures(1, &texture->tex);
-  glGenTextures(1, &texture->tex);
-
   if (!texture->sampler)
   {
     glGenSamplers(1, &texture->sampler);
@@ -261,16 +266,13 @@ bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_
     glSamplerParameteri(texture->sampler, GL_TEXTURE_WRAP_T    , GL_CLAMP_TO_EDGE);
   }
 
+  if (!wasDMA && texture->tex)
+    glDeleteTextures(1, &texture->tex);
+
   if (useDMA)
-  {
-    if (texture->dmaFBO)
-      glDeleteFramebuffers(1, &texture->dmaFBO);
-    if (texture->dmaTex)
-      glDeleteTextures(1, &texture->dmaTex);
-    glGenFramebuffers(1, &texture->dmaFBO);
-    glGenTextures(1, &texture->dmaTex);
     return true;
-  }
+
+  glGenTextures(1, &texture->tex);
 
   glBindTexture(GL_TEXTURE_2D, texture->tex);
   glTexImage2D(GL_TEXTURE_2D, 0, texture->intFormat, texture->width,
@@ -387,18 +389,18 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
     return true;
   }
 
-  EGLImage image = EGL_NO_IMAGE;
+  struct DMAState * state = NULL;
 
   for (int i = 0; i < texture->dmaImageUsed; ++i)
   {
     if (texture->dmaImages[i].fd == dmaFd)
     {
-      image = texture->dmaImages[i].image;
+      state = texture->dmaImages + i;
       break;
     }
   }
 
-  if (image == EGL_NO_IMAGE)
+  if (!state)
   {
     EGLAttrib const attribs[] =
     {
@@ -412,7 +414,7 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
     };
 
     /* create the image backed by the dma buffer */
-    image = eglCreateImage(
+    EGLImage image = eglCreateImage(
       texture->display,
       EGL_NO_CONTEXT,
       EGL_LINUX_DMA_BUF_EXT,
@@ -440,27 +442,30 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
       texture->dmaImages     = new;
     }
 
-    size_t index = texture->dmaImageUsed++;
-    texture->dmaImages[index].fd    = dmaFd;
-    texture->dmaImages[index].image = image;
+    state = texture->dmaImages + texture->dmaImageUsed++;
+    state->fd    = dmaFd;
+    state->image = image;
+    state->sync  = NULL;
+    glGenTextures(2, state->tex);
+    glGenFramebuffers(1, &state->fbo);
   }
 
   /* wait for completion */
   framebuffer_wait(frame, texture->height * texture->stride);
 
-  glBindTexture(GL_TEXTURE_2D, texture->dmaTex);
-  g_egl_dynProcs.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
+  glBindTexture(GL_TEXTURE_2D, state->tex[1]);
+  g_egl_dynProcs.glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, state->image);
 
-  glBindFramebuffer(GL_FRAMEBUFFER, texture->dmaFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->dmaTex, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, state->fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, state->tex[1], 0);
 
-  glBindTexture(GL_TEXTURE_2D, texture->tex);
+  glBindTexture(GL_TEXTURE_2D, state->tex[0]);
   glCopyTexImage2D(GL_TEXTURE_2D, 0, texture->intFormat, 0, 0, texture->width, texture->height, 0);
 
-  GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  state->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   glFlush();
 
-  switch (glClientWaitSync(fence, 0, 10000000)) // 10ms
+  switch (glClientWaitSync(state->sync, 0, 10000000)) // 10ms
   {
     case GL_ALREADY_SIGNALED:
     case GL_CONDITION_SATISFIED:
@@ -474,6 +479,7 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
     case GL_INVALID_VALUE:
       DEBUG_EGL_ERROR("glClientWaitSync failed");
   }
+  texture->tex = state->tex[0];
 
   atomic_fetch_add_explicit(&texture->state.w, 1, memory_order_release);
   return true;
