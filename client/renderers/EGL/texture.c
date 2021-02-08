@@ -19,9 +19,12 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 
 #include "texture.h"
 #include "common/debug.h"
+#include "common/event.h"
 #include "common/framebuffer.h"
+#include "common/thread.h"
 #include "egl_dynprocs.h"
 #include "egldebug.h"
+#include "ll.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +95,10 @@ struct EGL_Texture
   size_t dmaImageCount;
   size_t dmaImageUsed;
   struct DMAState *dmaImages;
+  LGThread *dmaThread;
+  struct ll *dmaQueue;
+  LGEvent *dmaQueueEvent;
+  bool dmaStop;
 };
 
 bool egl_texture_init(EGL_Texture ** texture, EGLDisplay * display)
@@ -132,7 +139,15 @@ void egl_texture_free(EGL_Texture ** texture)
     }
   }
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-  glDeleteTextures(1, &(*texture)->tex);
+  if (!(*texture)->dma)
+    glDeleteTextures(1, &(*texture)->tex);
+
+  if ((*texture)->dmaThread)
+  {
+    (*texture)->dmaStop = true;
+    lgSignalEvent((*texture)->dmaQueueEvent);
+    lgJoinThread((*texture)->dmaThread, NULL);
+  }
 
   for (size_t i = 0; i < (*texture)->dmaImageUsed; ++i)
   {
@@ -180,6 +195,8 @@ static void egl_texture_unmap(EGL_Texture * texture, uint8_t i)
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
   texture->buf[i].map = NULL;
 }
+
+static int egl_texture_dma_thread(void * opaque);
 
 bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA)
 {
@@ -270,7 +287,23 @@ bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_
     glDeleteTextures(1, &texture->tex);
 
   if (useDMA)
+  {
+    if (!texture->dmaQueueEvent)
+      texture->dmaQueueEvent = lgCreateEvent(true, 0);
+    if (!texture->dmaQueue)
+      texture->dmaQueue = ll_new();
+
+    if (!texture->dmaThread)
+    {
+      if (!lgCreateThread("egl_texture_dma_thread", egl_texture_dma_thread,
+            texture, &texture->dmaThread))
+      {
+        DEBUG_ERROR("Failed to create DMA thread");
+        return false;;
+      }
+    }
     return true;
+  }
 
   glGenTextures(1, &texture->tex);
 
@@ -465,24 +498,41 @@ bool egl_texture_update_from_dma(EGL_Texture * texture, const FrameBuffer * fram
   state->sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   glFlush();
 
-  switch (glClientWaitSync(state->sync, 0, 10000000)) // 10ms
-  {
-    case GL_ALREADY_SIGNALED:
-    case GL_CONDITION_SATISFIED:
-      break;
-
-    case GL_TIMEOUT_EXPIRED:
-      egl_warn_slow();
-      break;
-
-    case GL_WAIT_FAILED:
-    case GL_INVALID_VALUE:
-      DEBUG_EGL_ERROR("glClientWaitSync failed");
-  }
-  texture->tex = state->tex[0];
+  ll_push(texture->dmaQueue, state);
+  lgSignalEvent(texture->dmaQueueEvent);
 
   atomic_fetch_add_explicit(&texture->state.w, 1, memory_order_release);
   return true;
+}
+
+static int egl_texture_dma_thread(void * opaque)
+{
+  EGL_Texture * texture = (EGL_Texture *) opaque;
+
+  while (!texture->dmaStop)
+  {
+    while (ll_shift(texture->dmaQueue, &opaque))
+    {
+      struct DMAState * state = opaque;
+      switch (glClientWaitSync(state->sync, 0, 10000000)) // 10ms
+      {
+        case GL_ALREADY_SIGNALED:
+        case GL_CONDITION_SATISFIED:
+          break;
+
+        case GL_TIMEOUT_EXPIRED:
+          egl_warn_slow();
+          break;
+
+        case GL_WAIT_FAILED:
+        case GL_INVALID_VALUE:
+          DEBUG_EGL_ERROR("glClientWaitSync failed");
+      }
+      texture->tex = state->tex[0];
+    }
+    lgWaitEvent(texture->dmaQueueEvent, TIMEOUT_INFINITE);
+  }
+  return 0;
 }
 
 enum EGL_TexStatus egl_texture_process(EGL_Texture * texture)
