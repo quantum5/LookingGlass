@@ -46,7 +46,6 @@ typedef struct CUctx_st *CUcontext;
 typedef uintptr_t CUdeviceptr;
 
 #define CUDA_SUCCESS 0
-#define CU_MEMHOSTREGISTER_IOMEMORY 0x04
 
 struct CUDA
 {
@@ -54,21 +53,14 @@ struct CUDA
   HMODULE dll;
 
   CUresult (*cuInit)(unsigned int Flags);
-  CUresult (*cuDeviceGetCount)(int *count);
-  CUresult (*cuDeviceGet)(CUdevice *device, int ordinal);
-  CUresult (*cuDeviceGetName)(char *name, int len, CUdevice dev);
-  CUresult (*cuCtxCreate)(CUcontext *pctx, unsigned int flags, CUdevice dev);
-  CUresult (*cuCtxDestroy)(CUcontext ctx);
+  CUresult (*cuCtxGetCurrent)(CUcontext *pctx);
   CUresult (*cuCtxSetCurrent)(CUcontext ctx);
-  CUresult (*cuMemAlloc)(CUdeviceptr *dptr, size_t bytesize);
-  CUresult (*cuMemFree)(CUdeviceptr dptr);
-  CUresult (*cuMemcpyHtoD)(CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount);
-  CUresult (*cuMemcpyDtoH)(void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
-  CUresult (*cuMemHostRegister)(void *p, size_t bytesize, unsigned int Flags);
+  CUresult (*cuMemAlloc_v2)(CUdeviceptr *dptr, size_t bytesize);
+  CUresult (*cuMemFree_v2)(CUdeviceptr dptr);
+  CUresult (*cuMemcpyHtoD_v2)(CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount);
+  CUresult (*cuMemcpyDtoH_v2)(void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
+  CUresult (*cuMemHostRegister_v2)(void *p, size_t bytesize, unsigned int Flags);
   CUresult (*cuMemHostUnregister)(void *p);
-
-  CUdevice  device;
-  CUcontext context;
 };
 
 struct stNvFBCHandle
@@ -76,6 +68,7 @@ struct stNvFBCHandle
   NvFBCCuda * nvfbc;
   HANDLE      cursorEvent;
   int         retry;
+  CUcontext   context;
   CUdeviceptr buffer;
 };
 
@@ -121,19 +114,22 @@ bool NvFBCInit()
 #define LOAD_CUDA_FUNC(x) cuda.x = (decltype(cuda.x)) GetProcAddress(cuda.dll, #x); \
   if (!cuda.x) { DEBUG_ERROR("Failed to load " #x); return false; }
   LOAD_CUDA_FUNC(cuInit);
-  LOAD_CUDA_FUNC(cuDeviceGetCount);
-  LOAD_CUDA_FUNC(cuDeviceGet);
-  LOAD_CUDA_FUNC(cuDeviceGetName);
-  LOAD_CUDA_FUNC(cuCtxCreate);
-  LOAD_CUDA_FUNC(cuCtxDestroy);
+  LOAD_CUDA_FUNC(cuCtxGetCurrent);
   LOAD_CUDA_FUNC(cuCtxSetCurrent);
-  LOAD_CUDA_FUNC(cuMemAlloc);
-  LOAD_CUDA_FUNC(cuMemFree);
-  LOAD_CUDA_FUNC(cuMemcpyHtoD);
-  LOAD_CUDA_FUNC(cuMemcpyDtoH);
-  LOAD_CUDA_FUNC(cuMemHostRegister);
+  LOAD_CUDA_FUNC(cuMemAlloc_v2);
+  LOAD_CUDA_FUNC(cuMemFree_v2);
+  LOAD_CUDA_FUNC(cuMemcpyHtoD_v2);
+  LOAD_CUDA_FUNC(cuMemcpyDtoH_v2);
+  LOAD_CUDA_FUNC(cuMemHostRegister_v2);
   LOAD_CUDA_FUNC(cuMemHostUnregister);
 #undef LOAD_CUDA_FUNC
+
+  CUresult status;
+  if ((status = cuda.cuInit(0)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to initialize CUDA: %d", status);
+    return false;
+  }
 
   NvU32 version;
   if (nvapi.getVersion(&version) != NVFBC_SUCCESS)
@@ -150,44 +146,6 @@ bool NvFBCInit()
     return false;
   }
 
-  CUresult status;
-  if ((status = cuda.cuInit(0)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to initialize CUDA: %d", status);
-    return false;
-  }
-
-  int deviceCount;
-  if ((status = cuda.cuDeviceGetCount(&deviceCount)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to get CUDA device count: %d", status);
-    return false;
-  }
-
-  if (!deviceCount)
-  {
-    DEBUG_ERROR("No CUDA device available");
-    return false;
-  }
-
-  if ((status = cuda.cuDeviceGet(&cuda.device, 0)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to get CUDA device 0: %d", status);
-    return false;
-  }
-
-  char name[256];
-  if ((status = cuda.cuDeviceGetName(name, sizeof name, cuda.device)) == CUDA_SUCCESS)
-    DEBUG_INFO("Using CUDA device: %s", name);
-  else
-    DEBUG_ERROR("Failed to get CUDA device name: %d", status);
-
-  if ((status = cuda.cuCtxCreate(&cuda.context, 0, cuda.device)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to create CUDA context: %d", status);
-    return false;
-  }
-
   nvapi.initialized = true;
   return true;
 }
@@ -196,8 +154,6 @@ void NvFBCFree()
 {
   if (!nvapi.initialized)
     return;
-
-  cuda.cuCtxDestroy(cuda.context);
 
   FreeLibrary(nvapi.dll);
   FreeLibrary(cuda.dll);
@@ -221,14 +177,40 @@ bool NvFBCCudaCreate(
   params.dwPrivateDataSize = privDataSize;
   params.pPrivateData      = privData;
 
-  if (nvapi.createEx(&params) != NVFBC_SUCCESS)
+  if (nvapi.createEx(&params) != NVFBC_SUCCESS || params.pNvFBC == NULL)
   {
     *handle = NULL;
     return false;
   }
 
+  NvFBCCuda *nvfbc = static_cast<NvFBCCuda *>(params.pNvFBC);
+  DWORD maxBufferSize;
+  if (nvfbc->NvFBCCudaGetMaxBufferSize(&maxBufferSize) != NVFBC_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to obtain max NvFBC frame size");
+    return false;
+  }
+
+  CUcontext context;
+  CUdeviceptr buffer;
+  CUresult result;
+
+  if ((result = cuda.cuCtxGetCurrent(&context)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to to get current CUDA context: %d", result);
+    return false;
+  }
+
+  if ((result = cuda.cuMemAlloc_v2(&buffer, maxBufferSize)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to allocate memory for cuda: %d", result);
+    return false;
+  }
+
   *handle = (NvFBCHandle)calloc(sizeof(struct stNvFBCHandle), 1);
-  (*handle)->nvfbc = static_cast<NvFBCCuda *>(params.pNvFBC);
+  (*handle)->nvfbc = nvfbc;
+  (*handle)->context = context;
+  (*handle)->buffer = buffer;
 
   if (maxWidth)
     *maxWidth = params.dwMaxDisplayWidth;
@@ -244,7 +226,7 @@ void NvFBCCudaRelease(NvFBCHandle * handle)
   if (!*handle)
     return;
 
-  cuda.cuMemFree((*handle)->buffer);
+  cuda.cuMemFree_v2((*handle)->buffer);
   (*handle)->nvfbc->NvFBCCudaRelease();
   free(*handle);
   *handle = NULL;
@@ -285,26 +267,6 @@ bool NvFBCCudaSetup(
   if (cursorEvent)
     *cursorEvent = params.hCursorCaptureEvent;
 
-  DWORD maxBufferSize;
-  if ((status = handle->nvfbc->NvFBCCudaGetMaxBufferSize(&maxBufferSize)) != NVFBC_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to obtain max NvFBC frame size");
-    return false;
-  }
-
-  CUresult result;
-  if ((result = cuda.cuCtxSetCurrent(cuda.context)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to make CUDA context current: %d", result);
-    return false;
-  }
-
-  if ((result = cuda.cuMemAlloc(&handle->buffer, maxBufferSize)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to allocate memory for cuda: %d", result);
-    return false;
-  }
-
   return true;
 }
 
@@ -318,6 +280,19 @@ CaptureResult NvFBCCudaCapture(
   NvFBCFrameGrabInfo * grabInfo
 )
 {
+  CUresult result;
+
+  static __thread bool setCtx = false;
+  if (!setCtx)
+  {
+    if ((result = cuda.cuCtxSetCurrent(handle->context)) != CUDA_SUCCESS)
+    {
+      DEBUG_ERROR("Failed to make CUDA context current: %d", result);
+      return CAPTURE_RESULT_ERROR;
+    }
+    setCtx = true;
+  }
+
   NVFBC_CUDA_GRAB_FRAME_PARAMS params = {0};
 
   params.dwVersion           = NVFBC_CUDA_GRAB_FRAME_PARAMS_VER;
@@ -326,6 +301,7 @@ CaptureResult NvFBCCudaCapture(
   params.pCUDADeviceBuffer   = (void *) handle->buffer;
   params.pNvFBCFrameGrabInfo = grabInfo;
 
+  memset(grabInfo, 0, sizeof *grabInfo);
   grabInfo->bMustRecreate = FALSE;
   NVFBCRESULT status = handle->nvfbc->NvFBCCudaGrabFrame(&params);
   if (grabInfo->bMustRecreate)
@@ -420,26 +396,41 @@ CaptureResult NvFBCCudaGetCursor(NvFBCHandle handle, CapturePointer * pointer, v
 bool NvFBCCudaCopyFrame(NvFBCHandle handle, void * target, size_t size)
 {
   CUresult result;
-  if ((result = cuda.cuCtxSetCurrent(cuda.context)) != CUDA_SUCCESS)
+
+  static __thread bool setCtx = false;
+  if (!setCtx)
   {
-    DEBUG_ERROR("Failed to make CUDA context current: %d", result);
-    return false;
+    if ((result = cuda.cuCtxSetCurrent(handle->context)) != CUDA_SUCCESS)
+    {
+      DEBUG_ERROR("Failed to make CUDA context current: %d", result);
+      return false;
+    }
+    setCtx = true;
   }
 
-  if ((result = cuda.cuMemHostRegister(target, size, CU_MEMHOSTREGISTER_IOMEMORY)) != CUDA_SUCCESS)
-  {
-    DEBUG_ERROR("Failed to register memory for CUDA: %d", result);
-    return false;
+  static void *registered[2] = {0};
+  static int used = 0;
+
+  bool in = false;
+  for (int i = 0; i < used; ++i) {
+    if (registered[i] == target)
+      in = true;
   }
 
-  if ((result = cuda.cuMemcpyDtoH(target, handle->buffer, size)) != CUDA_SUCCESS)
+  if (!in && used < 2) {
+    registered[used++] = target;
+    if ((result = cuda.cuMemHostRegister_v2(target, size, 0)) != CUDA_SUCCESS)
+    {
+      DEBUG_ERROR("Failed to register memory for CUDA: %d", result);
+      return false;
+    }
+  }
+
+  if ((result = cuda.cuMemcpyDtoH_v2(target, handle->buffer, size)) != CUDA_SUCCESS)
   {
     DEBUG_ERROR("Failed to copy memory from CUDA: %d", result);
     return false;
   }
-
-  if ((result = cuda.cuMemHostUnregister(target)) != CUDA_SUCCESS)
-    DEBUG_ERROR("Failed to unregister memory for CUDA: %d", result);
 
   return true;
 }
