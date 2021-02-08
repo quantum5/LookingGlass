@@ -50,28 +50,23 @@ enum DiffMapBlockSize
 bool NvFBCInit();
 void NvFBCFree();
 
-bool NvFBCToSysCreate(
+bool NvFBCCudaCreate(
   void         * privData,
   unsigned int   privDataSize,
   NvFBCHandle  * handle,
   unsigned int * maxWidth,
   unsigned int * maxHeight
 );
-void NvFBCToSysRelease(NvFBCHandle * handle);
+void NvFBCCudaRelease(NvFBCHandle * handle);
 
-bool NvFBCToSysSetup(
+bool NvFBCCudaSetup(
   NvFBCHandle           handle,
   enum                  BufferFormat format,
-  bool                  hwCursor,
   bool                  seperateCursorCapture,
-  bool                  useDiffMap,
-  enum DiffMapBlockSize diffMapBlockSize,
-  void               ** frameBuffer,
-  void               ** diffMap,
   HANDLE              * cursorEvent
 );
 
-CaptureResult NvFBCToSysCapture(
+CaptureResult NvFBCCudaCapture(
   NvFBCHandle          handle,
   const unsigned int   waitTime,
   const unsigned int   x,
@@ -81,7 +76,9 @@ CaptureResult NvFBCToSysCapture(
   NvFBCFrameGrabInfo * grabInfo
 );
 
-CaptureResult NvFBCToSysGetCursor(NvFBCHandle handle, CapturePointer * pointer, void * buffer, unsigned int size);
+CaptureResult NvFBCCudaGetCursor(NvFBCHandle handle, CapturePointer * pointer, void * buffer, unsigned int size);
+
+bool NvFBCCudaCopyFrame(NvFBCHandle handle, void * target, size_t size);
 
 #ifdef __cplusplus
 }

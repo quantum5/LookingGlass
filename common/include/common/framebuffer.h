@@ -60,4 +60,7 @@ void framebuffer_prepare(FrameBuffer * frame);
  */
 bool framebuffer_write(FrameBuffer * frame, const void * src, size_t size);
 
+void * framebuffer_lock(FrameBuffer * frame);
+void framebuffer_unlock(FrameBuffer * frame, size_t size);
+
 #endif

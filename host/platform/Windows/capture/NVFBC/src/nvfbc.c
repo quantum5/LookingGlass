@@ -51,9 +51,6 @@ struct iface
   unsigned int formatVer;
   unsigned int grabWidth, grabHeight, grabStride;
 
-  uint8_t * frameBuffer;
-  uint8_t * diffMap;
-
   NvFBCFrameGrabInfo grabInfo;
 
   LGEvent * frameEvent;
@@ -164,7 +161,7 @@ static bool nvfbc_init(void)
     free(buffer);
   }
 
-  if (!NvFBCToSysCreate(privData, privDataLen, &this->nvfbc, &this->maxWidth, &this->maxHeight))
+  if (!NvFBCCudaCreate(privData, privDataLen, &this->nvfbc, &this->maxWidth, &this->maxHeight))
   {
     free(privData);
     return false;
@@ -175,15 +172,10 @@ static bool nvfbc_init(void)
   lgResetEvent(this->frameEvent);
 
   HANDLE event;
-  if (!NvFBCToSysSetup(
+  if (!NvFBCCudaSetup(
     this->nvfbc,
     BUFFER_FMT_ARGB,
-    !this->seperateCursor,
     this->seperateCursor,
-    true,
-    DIFFMAP_BLOCKSIZE_128X128,
-    (void **)&this->frameBuffer,
-    (void **)&this->diffMap,
     &event
   ))
   {
@@ -246,7 +238,7 @@ static bool nvfbc_deinit(void)
 
   if (this->nvfbc)
   {
-    NvFBCToSysRelease(&this->nvfbc);
+    NvFBCCudaRelease(&this->nvfbc);
     this->nvfbc = NULL;
   }
 
@@ -283,7 +275,7 @@ static CaptureResult nvfbc_capture(void)
 {
   getDesktopSize(&this->width, &this->height, &this->dpi);
   NvFBCFrameGrabInfo grabInfo;
-  CaptureResult result = NvFBCToSysCapture(
+  CaptureResult result = NvFBCCudaCapture(
     this->nvfbc,
     1000,
     0, 0,
@@ -294,20 +286,6 @@ static CaptureResult nvfbc_capture(void)
 
   if (result != CAPTURE_RESULT_OK)
     return result;
-
-  bool changed = false;
-  const unsigned int h = (this->height + 127) / 128;
-  const unsigned int w = (this->width  + 127) / 128;
-  for(unsigned int y = 0; y < h; ++y)
-    for(unsigned int x = 0; x < w; ++x)
-      if (this->diffMap[(y*w)+x])
-      {
-        changed = true;
-        break;
-      }
-
-  if (!changed)
-    return CAPTURE_RESULT_TIMEOUT;
 
   memcpy(&this->grabInfo, &grabInfo, sizeof(grabInfo));
   lgSignalEvent(this->frameEvent);
@@ -362,11 +340,10 @@ static CaptureResult nvfbc_waitFrame(CaptureFrame * frame)
 
 static CaptureResult nvfbc_getFrame(FrameBuffer * frame)
 {
-  framebuffer_write(
-    frame,
-    this->frameBuffer,
-    this->grabInfo.dwHeight * this->grabInfo.dwBufferWidth * 4
-  );
+  size_t size = this->grabInfo.dwHeight * this->grabInfo.dwBufferWidth * 4;
+  if (!NvFBCCudaCopyFrame(this->nvfbc, framebuffer_lock(frame), size))
+    return CAPTURE_RESULT_ERROR;
+  framebuffer_unlock(frame, size);
   return CAPTURE_RESULT_OK;
 }
 
@@ -398,7 +375,7 @@ static int pointerThread(void * unused)
         continue;
       }
 
-      result = NvFBCToSysGetCursor(this->nvfbc, &pointer, data, size);
+      result = NvFBCCudaGetCursor(this->nvfbc, &pointer, data, size);
       if (result != CAPTURE_RESULT_OK)
       {
         DEBUG_WARN("NvFBCToSysGetCursor failed");

@@ -20,7 +20,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include "wrapper.h"
 #include "common/windebug.h"
 #include <windows.h>
-#include <NvFBC/nvFBCToSys.h>
+#include <NvFBC/nvFBCCuda.h>
 
 #ifdef _WIN64
 #define NVFBC_DLL "NvFBC64.dll"
@@ -40,14 +40,47 @@ struct NVAPI
   NvFBC_GetSDKVersionFunctionType getVersion;
 };
 
+typedef int CUresult;
+typedef int CUdevice;
+typedef struct CUctx_st *CUcontext;
+typedef uintptr_t CUdeviceptr;
+
+#define CUDA_SUCCESS 0
+#define CU_MEMHOSTREGISTER_IOMEMORY 0x04
+
+struct CUDA
+{
+  bool initialized;
+  HMODULE dll;
+
+  CUresult (*cuInit)(unsigned int Flags);
+  CUresult (*cuDeviceGetCount)(int *count);
+  CUresult (*cuDeviceGet)(CUdevice *device, int ordinal);
+  CUresult (*cuDeviceGetName)(char *name, int len, CUdevice dev);
+  CUresult (*cuCtxCreate)(CUcontext *pctx, unsigned int flags, CUdevice dev);
+  CUresult (*cuCtxDestroy)(CUcontext ctx);
+  CUresult (*cuCtxSetCurrent)(CUcontext ctx);
+  CUresult (*cuMemAlloc)(CUdeviceptr *dptr, size_t bytesize);
+  CUresult (*cuMemFree)(CUdeviceptr dptr);
+  CUresult (*cuMemcpyHtoD)(CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount);
+  CUresult (*cuMemcpyDtoH)(void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
+  CUresult (*cuMemHostRegister)(void *p, size_t bytesize, unsigned int Flags);
+  CUresult (*cuMemHostUnregister)(void *p);
+
+  CUdevice  device;
+  CUcontext context;
+};
+
 struct stNvFBCHandle
 {
-  NvFBCToSys * nvfbc;
-  HANDLE       cursorEvent;
-  int          retry;
+  NvFBCCuda * nvfbc;
+  HANDLE      cursorEvent;
+  int         retry;
+  CUdeviceptr buffer;
 };
 
 static NVAPI nvapi;
+static CUDA cuda;
 
 bool NvFBCInit()
 {
@@ -78,6 +111,30 @@ bool NvFBCInit()
     return false;
   }
 
+  cuda.dll = LoadLibraryA("nvcuda.dll");
+  if (!cuda.dll)
+  {
+    DEBUG_WINERROR("Failed to load nvcuda.dll", GetLastError());
+    return false;
+  }
+
+#define LOAD_CUDA_FUNC(x) cuda.x = (decltype(cuda.x)) GetProcAddress(cuda.dll, #x); \
+  if (!cuda.x) { DEBUG_ERROR("Failed to load " #x); return false; }
+  LOAD_CUDA_FUNC(cuInit);
+  LOAD_CUDA_FUNC(cuDeviceGetCount);
+  LOAD_CUDA_FUNC(cuDeviceGet);
+  LOAD_CUDA_FUNC(cuDeviceGetName);
+  LOAD_CUDA_FUNC(cuCtxCreate);
+  LOAD_CUDA_FUNC(cuCtxDestroy);
+  LOAD_CUDA_FUNC(cuCtxSetCurrent);
+  LOAD_CUDA_FUNC(cuMemAlloc);
+  LOAD_CUDA_FUNC(cuMemFree);
+  LOAD_CUDA_FUNC(cuMemcpyHtoD);
+  LOAD_CUDA_FUNC(cuMemcpyDtoH);
+  LOAD_CUDA_FUNC(cuMemHostRegister);
+  LOAD_CUDA_FUNC(cuMemHostUnregister);
+#undef LOAD_CUDA_FUNC
+
   NvU32 version;
   if (nvapi.getVersion(&version) != NVFBC_SUCCESS)
   {
@@ -93,6 +150,44 @@ bool NvFBCInit()
     return false;
   }
 
+  CUresult status;
+  if ((status = cuda.cuInit(0)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to initialize CUDA: %d", status);
+    return false;
+  }
+
+  int deviceCount;
+  if ((status = cuda.cuDeviceGetCount(&deviceCount)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to get CUDA device count: %d", status);
+    return false;
+  }
+
+  if (!deviceCount)
+  {
+    DEBUG_ERROR("No CUDA device available");
+    return false;
+  }
+
+  if ((status = cuda.cuDeviceGet(&cuda.device, 0)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to get CUDA device 0: %d", status);
+    return false;
+  }
+
+  char name[256];
+  if ((status = cuda.cuDeviceGetName(name, sizeof name, cuda.device)) == CUDA_SUCCESS)
+    DEBUG_INFO("Using CUDA device: %s", name);
+  else
+    DEBUG_ERROR("Failed to get CUDA device name: %d", status);
+
+  if ((status = cuda.cuCtxCreate(&cuda.context, 0, cuda.device)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to create CUDA context: %d", status);
+    return false;
+  }
+
   nvapi.initialized = true;
   return true;
 }
@@ -102,11 +197,14 @@ void NvFBCFree()
   if (!nvapi.initialized)
     return;
 
+  cuda.cuCtxDestroy(cuda.context);
+
   FreeLibrary(nvapi.dll);
+  FreeLibrary(cuda.dll);
   nvapi.initialized = false;
 }
 
-bool NvFBCToSysCreate(
+bool NvFBCCudaCreate(
   void         * privData,
   unsigned int   privDataSize,
   NvFBCHandle  * handle,
@@ -117,7 +215,7 @@ bool NvFBCToSysCreate(
   NvFBCCreateParams params = {0};
 
   params.dwVersion         = NVFBC_CREATE_PARAMS_VER;
-  params.dwInterfaceType   = NVFBC_TO_SYS;
+  params.dwInterfaceType   = NVFBC_SHARED_CUDA;
   params.pDevice           = NULL;
   params.dwAdapterIdx      = 0;
   params.dwPrivateDataSize = privDataSize;
@@ -130,7 +228,7 @@ bool NvFBCToSysCreate(
   }
 
   *handle = (NvFBCHandle)calloc(sizeof(struct stNvFBCHandle), 1);
-  (*handle)->nvfbc = static_cast<NvFBCToSys *>(params.pNvFBC);
+  (*handle)->nvfbc = static_cast<NvFBCCuda *>(params.pNvFBC);
 
   if (maxWidth)
     *maxWidth = params.dwMaxDisplayWidth;
@@ -141,41 +239,32 @@ bool NvFBCToSysCreate(
   return true;
 }
 
-void NvFBCToSysRelease(NvFBCHandle * handle)
+void NvFBCCudaRelease(NvFBCHandle * handle)
 {
   if (!*handle)
     return;
 
-  (*handle)->nvfbc->NvFBCToSysRelease();
+  cuda.cuMemFree((*handle)->buffer);
+  (*handle)->nvfbc->NvFBCCudaRelease();
   free(*handle);
   *handle = NULL;
 }
 
-bool NvFBCToSysSetup(
+bool NvFBCCudaSetup(
   NvFBCHandle           handle,
   enum                  BufferFormat format,
-  bool                  hwCursor,
   bool                  seperateCursorCapture,
-  bool                  useDiffMap,
-  enum DiffMapBlockSize diffMapBlockSize,
-  void               ** frameBuffer,
-  void               ** diffMap,
   HANDLE              * cursorEvent
 )
 {
-  NVFBC_TOSYS_SETUP_PARAMS params = {0};
-  params.dwVersion = NVFBC_TOSYS_SETUP_PARAMS_VER;
+  NVFBC_CUDA_SETUP_PARAMS params = {0};
+  params.dwVersion = NVFBC_CUDA_SETUP_PARAMS_VER;
 
   switch(format)
   {
-    case BUFFER_FMT_ARGB      : params.eMode = NVFBC_TOSYS_ARGB      ; break;
-    case BUFFER_FMT_RGB       : params.eMode = NVFBC_TOSYS_RGB       ; break;
-    case BUFFER_FMT_YYYYUV420p: params.eMode = NVFBC_TOSYS_YYYYUV420p; break;
-    case BUFFER_FMT_RGB_PLANAR: params.eMode = NVFBC_TOSYS_RGB_PLANAR; break;
-    case BUFFER_FMT_XOR       : params.eMode = NVFBC_TOSYS_XOR       ; break;
-    case BUFFER_FMT_YUV444p   : params.eMode = NVFBC_TOSYS_YUV444p   ; break;
+    case BUFFER_FMT_ARGB      : params.eFormat = NVFBC_TOCUDA_ARGB; break;
     case BUFFER_FMT_ARGB10    :
-      params.eMode       = NVFBC_TOSYS_ARGB10;
+      params.eFormat     = NVFBC_TOCUDA_ARGB10;
       params.bHDRRequest = TRUE;
       break;
 
@@ -184,39 +273,42 @@ bool NvFBCToSysSetup(
       return false;
   }
 
-  params.bWithHWCursor                = hwCursor              ? TRUE : FALSE;
   params.bEnableSeparateCursorCapture = seperateCursorCapture ? TRUE : FALSE;
-  params.bDiffMap                     = useDiffMap            ? TRUE : FALSE;
 
-  switch(diffMapBlockSize)
-  {
-    case DIFFMAP_BLOCKSIZE_128X128: params.eDiffMapBlockSize = NVFBC_TOSYS_DIFFMAP_BLOCKSIZE_128X128; break;
-    case DIFFMAP_BLOCKSIZE_16X16  : params.eDiffMapBlockSize = NVFBC_TOSYS_DIFFMAP_BLOCKSIZE_16X16  ; break;
-    case DIFFMAP_BLOCKSIZE_32X32  : params.eDiffMapBlockSize = NVFBC_TOSYS_DIFFMAP_BLOCKSIZE_32X32  ; break;
-    case DIFFMAP_BLOCKSIZE_64X64  : params.eDiffMapBlockSize = NVFBC_TOSYS_DIFFMAP_BLOCKSIZE_64X64  ; break;
-
-    default:
-      DEBUG_ERROR("Invalid diffMapBlockSize");
-      return false;
-  }
-
-  params.ppBuffer  = frameBuffer;
-  params.ppDiffMap = diffMap;
-
-  NVFBCRESULT status = handle->nvfbc->NvFBCToSysSetUp(&params);
+  NVFBCRESULT status = handle->nvfbc->NvFBCCudaSetup(&params);
   if (status != NVFBC_SUCCESS)
   {
-    DEBUG_ERROR("Failed to setup NVFBCToSys");
+    DEBUG_ERROR("Failed to setup NVFBCCuda");
     return false;
   }
 
   if (cursorEvent)
     *cursorEvent = params.hCursorCaptureEvent;
 
+  DWORD maxBufferSize;
+  if ((status = handle->nvfbc->NvFBCCudaGetMaxBufferSize(&maxBufferSize)) != NVFBC_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to obtain max NvFBC frame size");
+    return false;
+  }
+
+  CUresult result;
+  if ((result = cuda.cuCtxSetCurrent(cuda.context)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to make CUDA context current: %d", result);
+    return false;
+  }
+
+  if ((result = cuda.cuMemAlloc(&handle->buffer, maxBufferSize)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to allocate memory for cuda: %d", result);
+    return false;
+  }
+
   return true;
 }
 
-CaptureResult NvFBCToSysCapture(
+CaptureResult NvFBCCudaCapture(
   NvFBCHandle          handle,
   const unsigned int   waitTime,
   const unsigned int   x,
@@ -226,20 +318,16 @@ CaptureResult NvFBCToSysCapture(
   NvFBCFrameGrabInfo * grabInfo
 )
 {
-  NVFBC_TOSYS_GRAB_FRAME_PARAMS params = {0};
+  NVFBC_CUDA_GRAB_FRAME_PARAMS params = {0};
 
-  params.dwVersion           = NVFBC_TOSYS_GRAB_FRAME_PARAMS_VER;
-  params.dwFlags             = NVFBC_TOSYS_WAIT_WITH_TIMEOUT;
+  params.dwVersion           = NVFBC_CUDA_GRAB_FRAME_PARAMS_VER;
+  params.dwFlags             = NVFBC_TOCUDA_WAIT_WITH_TIMEOUT;
   params.dwWaitTime          = waitTime;
-  params.eGMode              = NVFBC_TOSYS_SOURCEMODE_CROP;
-  params.dwStartX            = x;
-  params.dwStartY            = y;
-  params.dwTargetWidth       = width;
-  params.dwTargetHeight      = height;
+  params.pCUDADeviceBuffer   = (void *) handle->buffer;
   params.pNvFBCFrameGrabInfo = grabInfo;
 
   grabInfo->bMustRecreate = FALSE;
-  NVFBCRESULT status = handle->nvfbc->NvFBCToSysGrabFrame(&params);
+  NVFBCRESULT status = handle->nvfbc->NvFBCCudaGrabFrame(&params);
   if (grabInfo->bMustRecreate)
   {
     DEBUG_INFO("NvFBC reported recreation is required");
@@ -277,12 +365,12 @@ CaptureResult NvFBCToSysCapture(
   return CAPTURE_RESULT_OK;
 }
 
-CaptureResult NvFBCToSysGetCursor(NvFBCHandle handle, CapturePointer * pointer, void * buffer, unsigned int size)
+CaptureResult NvFBCCudaGetCursor(NvFBCHandle handle, CapturePointer * pointer, void * buffer, unsigned int size)
 {
   NVFBC_CURSOR_CAPTURE_PARAMS params;
   params.dwVersion = NVFBC_CURSOR_CAPTURE_PARAMS_VER;
 
-  if (handle->nvfbc->NvFBCToSysCursorCapture(&params) != NVFBC_SUCCESS)
+  if (handle->nvfbc->NvFBCCudaCursorCapture(&params) != NVFBC_SUCCESS)
   {
     DEBUG_ERROR("Failed to get the cursor");
     return CAPTURE_RESULT_ERROR;
@@ -327,4 +415,31 @@ CaptureResult NvFBCToSysGetCursor(NvFBCHandle handle, CapturePointer * pointer, 
 
   memcpy(buffer, params.pBits, params.dwBufferSize);
   return CAPTURE_RESULT_OK;
+}
+
+bool NvFBCCudaCopyFrame(NvFBCHandle handle, void * target, size_t size)
+{
+  CUresult result;
+  if ((result = cuda.cuCtxSetCurrent(cuda.context)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to make CUDA context current: %d", result);
+    return false;
+  }
+
+  if ((result = cuda.cuMemHostRegister(target, size, CU_MEMHOSTREGISTER_IOMEMORY)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to register memory for CUDA: %d", result);
+    return false;
+  }
+
+  if ((result = cuda.cuMemcpyDtoH(target, handle->buffer, size)) != CUDA_SUCCESS)
+  {
+    DEBUG_ERROR("Failed to copy memory from CUDA: %d", result);
+    return false;
+  }
+
+  if ((result = cuda.cuMemHostUnregister(target)) != CUDA_SUCCESS)
+    DEBUG_ERROR("Failed to unregister memory for CUDA: %d", result);
+
+  return true;
 }

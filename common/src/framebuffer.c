@@ -204,3 +204,13 @@ bool framebuffer_write(FrameBuffer * frame, const void * restrict src, size_t si
   atomic_store_explicit(&frame->wp, wp, memory_order_release);
   return true;
 }
+
+void * framebuffer_lock(FrameBuffer * frame)
+{
+  return frame->data;
+}
+
+void framebuffer_unlock(FrameBuffer * frame, size_t written)
+{
+  atomic_store_explicit(&frame->wp, written, memory_order_release);
+}
