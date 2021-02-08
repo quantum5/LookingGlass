@@ -324,6 +324,35 @@ static int cursorThread(void * unused)
   return 0;
 }
 
+struct DMAState
+{
+  PLGMPClient client;
+  PLGMPClientQueue queue;
+  bool synced;
+};
+
+static void dmaCallback(void * opaque)
+{
+  struct DMAState * state = opaque;
+  LGMP_STATUS status;
+  LGMPMessage msg;
+
+  if (!state->synced)
+    return;
+
+  lgmpClientMessageDone(state->queue);
+  switch ((status = lgmpClientProcess(state->queue, &msg)))
+  {
+    case LGMP_OK:
+    case LGMP_ERR_QUEUE_EMPTY:
+      // If the queue is empty, that just means the next frame it not available.
+      break;
+    default:
+      DEBUG_ERROR("Failed to advance DMA message queue: %s", lgmpStatusString(status));
+      g_state.state = APP_STATE_RESTART;
+  }
+}
+
 int main_frameThread(void * unused)
 {
   struct DMAFrameInfo
@@ -346,9 +375,13 @@ int main_frameThread(void * unused)
     ivshmemHasDMA(&g_state.shm) &&
     g_state.lgr->supports &&
     g_state.lgr->supports(g_state.lgrData, LG_SUPPORTS_DMABUF);
+  static struct DMAState * dmaState = NULL;
 
   if (useDMA)
+  {
     DEBUG_INFO("Using DMA buffer support");
+    dmaState = calloc(1, sizeof *dmaState);
+  }
 
   lgWaitEvent(e_startup, TIMEOUT_INFINITE);
   if (g_state.state != APP_STATE_RUNNING)
@@ -370,6 +403,24 @@ int main_frameThread(void * unused)
     DEBUG_ERROR("lgmpClientSubscribe Failed: %s", lgmpStatusString(status));
     g_state.state = APP_STATE_SHUTDOWN;
     break;
+  }
+
+  if (useDMA && g_state.state == APP_STATE_RUNNING)
+  {
+    if ((status = lgmpClientInit(g_state.shm.mem, g_state.shm.size, &dmaState->client)) != LGMP_OK)
+    {
+      DEBUG_ERROR("lgmpClientInit Failed: %s", lgmpStatusString(status));
+      g_state.state = APP_STATE_SHUTDOWN;
+    }
+    else
+    {
+      status = lgmpClientSubscribe(dmaState->client, LGMP_Q_FRAME, &dmaState->queue);
+      if (status != LGMP_OK)
+      {
+        DEBUG_ERROR("DMA lgmpClientSubscribe Failed: %s", lgmpStatusString(status));
+        g_state.state = APP_STATE_SHUTDOWN;
+      }
+    }
   }
 
   while(g_state.state == APP_STATE_RUNNING && !g_state.stopVideo)
@@ -464,7 +515,7 @@ int main_frameThread(void * unused)
           frame->stride, frame->pitch,
           frame->rotation);
 
-      if (!g_state.lgr->on_frame_format(g_state.lgrData, lgrFormat, useDMA))
+      if (!g_state.lgr->on_frame_format(g_state.lgrData, lgrFormat, useDMA, dmaCallback, dmaState))
       {
         DEBUG_ERROR("renderer failed to configure format");
         g_state.state = APP_STATE_SHUTDOWN;
@@ -483,6 +534,31 @@ int main_frameThread(void * unused)
 
     if (useDMA)
     {
+      if (!dmaState->synced)
+      {
+        LGMPMessage dmaMsg;
+        switch ((status = lgmpClientProcess(dmaState->queue, &dmaMsg)))
+        {
+          case LGMP_OK:
+            if (dmaMsg.mem != msg.mem)
+            {
+              g_state.state = APP_STATE_RESTART;
+              goto fail;
+            }
+            dmaState->synced = true;
+            break;
+
+          case LGMP_ERR_QUEUE_EMPTY:
+            // We are one frame ahead, will sync next frame.
+            break;
+
+          default:
+            DEBUG_ERROR("Failed to advance DMA message queue: %s", lgmpStatusString(status));
+            g_state.state = APP_STATE_RESTART;
+            goto fail;
+        }
+      }
+
       /* find the existing dma buffer if it exists */
       for(int i = 0; i < sizeof(dmaInfo) / sizeof(struct DMAFrameInfo); ++i)
       {
@@ -552,7 +628,14 @@ int main_frameThread(void * unused)
     lgmpClientMessageDone(queue);
   }
 
+fail:
   lgmpClientUnsubscribe(&queue);
+  if (useDMA)
+  {
+    lgmpClientUnsubscribe(&dmaState->queue);
+    lgmpClientFree(&dmaState->client);
+    free(dmaState);
+  }
   g_state.lgr->on_restart(g_state.lgrData);
 
   if (useDMA)

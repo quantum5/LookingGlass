@@ -99,6 +99,9 @@ struct EGL_Texture
   struct ll *dmaQueue;
   LGEvent *dmaQueueEvent;
   bool dmaStop;
+
+  LG_RendererDMACallback dmaCallback;
+  void * dmaOpaque;
 };
 
 bool egl_texture_init(EGL_Texture ** texture, EGLDisplay * display)
@@ -198,7 +201,7 @@ static void egl_texture_unmap(EGL_Texture * texture, uint8_t i)
 
 static int egl_texture_dma_thread(void * opaque);
 
-bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA)
+bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA, LG_RendererDMACallback dmaCallback, void * dmaOpaque)
 {
   bool wasDMA = texture->dma;
 
@@ -286,21 +289,32 @@ bool egl_texture_setup(EGL_Texture * texture, enum EGL_PixelFormat pixFmt, size_
   if (!wasDMA && texture->tex)
     glDeleteTextures(1, &texture->tex);
 
+  if (texture->dmaThread)
+  {
+    texture->dmaStop = true;
+    lgSignalEvent(texture->dmaQueueEvent);
+    lgJoinThread(texture->dmaThread, NULL);
+    texture->dmaThread = NULL;
+  }
+
   if (useDMA)
   {
     if (!texture->dmaQueueEvent)
       texture->dmaQueueEvent = lgCreateEvent(true, 0);
+
     if (!texture->dmaQueue)
       texture->dmaQueue = ll_new();
+    else
+      while (ll_shift(texture->dmaQueue, NULL));
 
-    if (!texture->dmaThread)
+    texture->dmaCallback = dmaCallback;
+    texture->dmaOpaque = dmaOpaque;
+
+    if (!lgCreateThread("egl_texture_dma_thread", egl_texture_dma_thread,
+          texture, &texture->dmaThread))
     {
-      if (!lgCreateThread("egl_texture_dma_thread", egl_texture_dma_thread,
-            texture, &texture->dmaThread))
-      {
-        DEBUG_ERROR("Failed to create DMA thread");
-        return false;;
-      }
+      DEBUG_ERROR("Failed to create DMA thread");
+      return false;
     }
     return true;
   }
@@ -529,6 +543,8 @@ static int egl_texture_dma_thread(void * opaque)
           DEBUG_EGL_ERROR("glClientWaitSync failed");
       }
       texture->tex = state->tex[0];
+      if (texture->dmaCallback)
+        texture->dmaCallback(texture->dmaOpaque);
     }
     lgWaitEvent(texture->dmaQueueEvent, TIMEOUT_INFINITE);
   }

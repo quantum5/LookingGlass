@@ -425,7 +425,8 @@ bool egl_on_mouse_event(void * opaque, const bool visible, const int x, const in
   return true;
 }
 
-bool egl_on_frame_format(void * opaque, const LG_RendererFormat format, bool useDMA)
+bool egl_on_frame_format(void * opaque, const LG_RendererFormat format, bool useDMA,
+      LG_RendererDMACallback dmaCallback, void * dmaOpaque)
 {
   struct Inst * this = (struct Inst *)opaque;
   memcpy(&this->format, &format, sizeof(LG_RendererFormat));
@@ -453,7 +454,7 @@ bool egl_on_frame_format(void * opaque, const LG_RendererFormat format, bool use
   }
 
   this->useNearest = this->width < format.width || this->height < format.height;
-  return egl_desktop_setup(this->desktop, format, useDMA);
+  return egl_desktop_setup(this->desktop, format, useDMA, dmaCallback, dmaOpaque);
 }
 
 bool egl_on_frame(void * opaque, const FrameBuffer * frame, int dmaFd)

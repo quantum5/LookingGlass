@@ -234,7 +234,7 @@ void egl_cursor_render(EGL_Cursor * cursor, LG_RendererRotate rotate)
 
       case LG_CURSOR_COLOR:
       {
-        egl_texture_setup(cursor->norm.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->stride, false, false);
+        egl_texture_setup(cursor->norm.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->stride, false, false, NULL, NULL);
         egl_texture_update(cursor->norm.texture, data);
         egl_model_set_texture(cursor->model, cursor->norm.texture);
         break;
@@ -258,8 +258,8 @@ void egl_cursor_render(EGL_Cursor * cursor, LG_RendererRotate rotate)
             xor[y * cursor->width + x] = xorMask;
           }
 
-        egl_texture_setup (cursor->norm.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->width * 4, false, false);
-        egl_texture_setup (cursor->mono.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->width * 4, false, false);
+        egl_texture_setup (cursor->norm.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->width * 4, false, false, NULL, NULL);
+        egl_texture_setup (cursor->mono.texture, EGL_PF_BGRA, cursor->width, cursor->height, cursor->width * 4, false, false, NULL, NULL);
         egl_texture_update(cursor->norm.texture, (uint8_t *)and);
         egl_texture_update(cursor->mono.texture, (uint8_t *)xor);
         break;

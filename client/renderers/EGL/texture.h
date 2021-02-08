@@ -22,6 +22,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include <stdbool.h>
 #include "shader.h"
 #include "common/framebuffer.h"
+#include "interface/renderer.h"
 
 #include <SDL2/SDL_egl.h>
 #include <GL/gl.h>
@@ -47,7 +48,7 @@ enum EGL_TexStatus
 bool egl_texture_init(EGL_Texture ** texture, EGLDisplay * display);
 void egl_texture_free(EGL_Texture ** tex);
 
-bool               egl_texture_setup  (EGL_Texture * texture, enum EGL_PixelFormat pixfmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA);
+bool               egl_texture_setup  (EGL_Texture * texture, enum EGL_PixelFormat pixfmt, size_t width, size_t height, size_t stride, bool streaming, bool useDMA, LG_RendererDMACallback dmaCallback, void * dmaOpaque);
 bool               egl_texture_update (EGL_Texture * texture, const uint8_t * buffer);
 bool               egl_texture_update_from_frame(EGL_Texture * texture, const FrameBuffer * frame);
 bool               egl_texture_update_from_dma  (EGL_Texture * texture, const FrameBuffer * frmame, const int dmaFd);

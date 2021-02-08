@@ -173,7 +173,9 @@ void egl_help_render(EGL_Help * help, const float scaleX, const float scaleY)
         bmp->height,
         bmp->width * bmp->bpp,
         false,
-        false
+        false,
+        NULL,
+        NULL
       );
     }
 

@@ -167,7 +167,8 @@ void egl_desktop_free(EGL_Desktop ** desktop)
   *desktop = NULL;
 }
 
-bool egl_desktop_setup(EGL_Desktop * desktop, const LG_RendererFormat format, bool useDMA)
+bool egl_desktop_setup(EGL_Desktop * desktop, const LG_RendererFormat format, bool useDMA,
+    LG_RendererDMACallback dmaCallback, void * dmaOpaque)
 {
   enum EGL_PixelFormat pixFmt;
   switch(format.type)
@@ -207,7 +208,9 @@ bool egl_desktop_setup(EGL_Desktop * desktop, const LG_RendererFormat format, bo
     format.height,
     format.pitch,
     true, // streaming texture
-    useDMA
+    useDMA,
+    dmaCallback,
+    dmaOpaque
   ))
   {
     DEBUG_ERROR("Failed to setup the desktop texture");

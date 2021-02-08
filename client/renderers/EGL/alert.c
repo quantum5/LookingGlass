@@ -176,7 +176,9 @@ void egl_alert_render(EGL_Alert * alert, const float scaleX, const float scaleY)
       alert->bmp->height,
       alert->bmp->width * alert->bmp->bpp,
       false,
-      false
+      false,
+      NULL,
+      NULL
     );
 
     egl_texture_update(alert->texture, alert->bmp->pixels);
