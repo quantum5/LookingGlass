@@ -3,7 +3,8 @@
 #define EGL_SCALE_AUTO    0
 #define EGL_SCALE_NEAREST 1
 #define EGL_SCALE_LINEAR  2
-#define EGL_SCALE_MAX     3
+#define EGL_SCALE_CUBIC   3
+#define EGL_SCALE_MAX     4
 
 in  highp vec2 uv;
 out highp vec4 color;
@@ -17,6 +18,36 @@ uniform       int   rotate;
 uniform       int   nv;
 uniform highp float nvGain;
 uniform       int   cbMode;
+
+vec4 cubic(highp float v) {
+  highp vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+  highp vec4 s = n * n * n;
+  highp float x = s.x;
+  highp float y = s.y - 4.0 * s.x;
+  highp float z = s.z - 4.0 * s.y + 6.0 * s.x;
+  highp float w = 6.0 - x - y - z;
+  return vec4(x, y, z, w) * (1.0/6.0);
+}
+
+vec4 textureCubic(sampler2D sampler, highp vec2 texCoords) {
+  texCoords = texCoords * size - 0.5;
+
+  highp vec2 fxy = fract(texCoords);
+  texCoords -= fxy;
+
+  highp vec4 xcubic = cubic(fxy.x);
+  highp vec4 ycubic = cubic(fxy.y);
+
+  highp vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
+  highp vec4 offset = texCoords.xxyy + vec2 (-0.5, +1.5).xyxy + vec4(xcubic.yw, ycubic.yw) / s;
+  highp float sx = s.x / (s.x + s.y);
+
+  return mix(
+    mix(texelFetch(sampler, ivec2(offset.yw), 0), texelFetch(sampler, ivec2(offset.xw), 0), sx),
+    mix(texelFetch(sampler, ivec2(offset.yz), 0), texelFetch(sampler, ivec2(offset.xz), 0), sx),
+    s.z / (s.z + s.w)
+  );
+}
 
 void main()
 {
@@ -49,6 +80,10 @@ void main()
 
     case EGL_SCALE_LINEAR:
       color = texture(sampler1, ruv);
+      break;
+
+    case EGL_SCALE_CUBIC:
+      color = textureCubic(sampler1, ruv);
       break;
   }
 

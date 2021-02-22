@@ -171,6 +171,8 @@ static const char * egl_desktop_scale_algo_name(int algorithm)
       return "Nearest";
     case EGL_SCALE_LINEAR:
       return "Linear";
+    case EGL_SCALE_CUBIC:
+      return "Cubic";
     default:
       return "(unknown)";
   }
