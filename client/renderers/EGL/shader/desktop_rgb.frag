@@ -3,7 +3,8 @@
 #define EGL_SCALE_AUTO    0
 #define EGL_SCALE_NEAREST 1
 #define EGL_SCALE_LINEAR  2
-#define EGL_SCALE_MAX     3
+#define EGL_SCALE_LANCZOS 3
+#define EGL_SCALE_MAX     4
 
 in  highp vec2 uv;
 out highp vec4 color;
@@ -17,6 +18,43 @@ uniform       int   rotate;
 uniform       int   nv;
 uniform highp float nvGain;
 uniform       int   cbMode;
+
+highp float sinc(highp float x)
+{
+  return x == 0.0 ? 1.0 : sin(x * 3.141592653589793) * 0.3183098861837907 / x;
+}
+
+highp float lanczos(highp vec2 v)
+{
+  return sinc(v.x) * sinc(v.y) * sinc(v.x) * sinc(v.y);
+}
+
+highp vec4 textureLanczos(sampler2D sampler, highp vec2 uv)
+{
+  uv *= size;
+  highp ivec2 c = ivec2(uv);
+  highp vec2 d = uv - vec2(c);
+  highp float k1 = lanczos(d - vec2(-1, -1));
+  highp float k2 = lanczos(d - vec2(-1,  0));
+  highp float k3 = lanczos(d - vec2(-1, +1));
+  highp float k4 = lanczos(d - vec2( 0, -1));
+  highp float k5 = lanczos(d - vec2( 0,  0));
+  highp float k6 = lanczos(d - vec2( 0, +1));
+  highp float k7 = lanczos(d - vec2(+1, -1));
+  highp float k8 = lanczos(d - vec2(+1,  0));
+  highp float k9 = lanczos(d - vec2(+1, +1));
+  return (
+    texelFetch(sampler, c + ivec2(-1, -1), 0) * k1 +
+    texelFetch(sampler, c + ivec2(-1,  0), 0) * k2 +
+    texelFetch(sampler, c + ivec2(-1, +1), 0) * k3 +
+    texelFetch(sampler, c + ivec2( 0, -1), 0) * k4 +
+    texelFetch(sampler, c + ivec2( 0,  0), 0) * k5 +
+    texelFetch(sampler, c + ivec2( 0, +1), 0) * k6 +
+    texelFetch(sampler, c + ivec2(+1, -1), 0) * k7 +
+    texelFetch(sampler, c + ivec2(+1,  0), 0) * k8 +
+    texelFetch(sampler, c + ivec2(+1, +1), 0) * k9
+  ) / (k1 + k2 + k3 + k4 + k5 + k6 + k7 + k8 + k9);
+}
 
 void main()
 {
@@ -49,6 +87,10 @@ void main()
 
     case EGL_SCALE_LINEAR:
       color = texture(sampler1, ruv);
+      break;
+
+    case EGL_SCALE_LANCZOS:
+      color = textureLanczos(sampler1, ruv);
       break;
   }
 
