@@ -91,6 +91,8 @@ void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct 
       DEBUG_INFO("Swapping buffers with damage: not supported");
   }
 
+  waylandPresentationFrame();
+
   if (wlWm.eglSwapWithDamage && count)
   {
     if (count * 4 > wlWm.eglDamageRectCount)
