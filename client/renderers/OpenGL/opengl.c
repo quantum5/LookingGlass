@@ -414,9 +414,10 @@ bool opengl_on_frame_format(void * opaque, const LG_RendererFormat format, bool 
   return true;
 }
 
-bool opengl_on_frame(void * opaque, const FrameBuffer * frame, int dmaFd)
+bool opengl_on_frame(void * opaque, const FrameBuffer * frame, int dmaFd, struct FrameTimes * timings)
 {
   struct Inst * this = (struct Inst *)opaque;
+  free(timings);
 
   LG_LOCK(this->frameLock);
   this->frame = frame;

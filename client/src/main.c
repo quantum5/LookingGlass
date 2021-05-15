@@ -426,6 +426,10 @@ int main_frameThread(void * unused)
       break;
     }
 
+    struct FrameTimes * timings = malloc(sizeof(struct FrameTimes));
+    if (timings)
+      clock_gettime(g_state.clkId, &timings->received);
+
     KVMFRFrame * frame = (KVMFRFrame *)msg.mem;
     struct DMAFrameInfo *dma = NULL;
 
@@ -570,7 +574,7 @@ int main_frameThread(void * unused)
     }
 
     FrameBuffer * fb = (FrameBuffer *)(((uint8_t*)frame) + frame->offset);
-    if (!g_state.lgr->on_frame(g_state.lgrData, fb, useDMA ? dma->fd : -1))
+    if (!g_state.lgr->on_frame(g_state.lgrData, fb, useDMA ? dma->fd : -1, timings))
     {
       lgmpClientMessageDone(queue);
       DEBUG_ERROR("renderer on frame returned failure");
@@ -681,6 +685,7 @@ static int lg_run(void)
   else if (g_cursor.sens >  9) g_cursor.sens =  9;
 
   g_state.showFPS = g_params.showFPS;
+  g_state.clkId   = CLOCK_MONOTONIC;
 
   // search for the best displayserver ops to use
   for(int i = 0; i < LG_DISPLAYSERVER_COUNT; ++i)

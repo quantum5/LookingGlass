@@ -36,6 +36,15 @@ typedef enum LG_MsgAlert
 }
 LG_MsgAlert;
 
+struct FrameTimes
+{
+  struct timespec received;
+  struct timespec imported;
+  struct timespec rendered;
+  struct timespec swapped;
+  struct timespec photon;
+};
+
 bool app_isRunning(void);
 bool app_inputEnabled(void);
 bool app_isCaptureMode(void);
@@ -44,6 +53,9 @@ bool app_isFormatValid(void);
 void app_updateCursorPos(double x, double y);
 void app_updateWindowPos(int x, int y);
 void app_handleResizeEvent(int w, int h, double scale, const struct Border border);
+
+clockid_t app_getClockId(void);
+void app_updateClockId(clockid_t clkId);
 
 void app_handleMouseRelative(double normx, double normy,
     double rawx, double rawy);
@@ -67,7 +79,8 @@ bool app_getProp(LG_DSProperty prop, void * ret);
 #ifdef ENABLE_EGL
 EGLDisplay app_getEGLDisplay(void);
 EGLNativeWindowType app_getEGLNativeWindow(void);
-void app_eglSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count);
+void app_eglSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+    int count, struct FrameTimes * timings);
 #endif
 
 #ifdef ENABLE_OPENGL

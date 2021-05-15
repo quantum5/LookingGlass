@@ -112,7 +112,6 @@ struct WaylandDSState
 #endif
 
   struct wp_presentation * presentation;
-  clockid_t clkId;
 
 #ifdef ENABLE_LIBDECOR
   struct libdecor * libdecor;
@@ -211,7 +210,8 @@ void waylandShowPointer(bool show);
 #if defined(ENABLE_EGL) || defined(ENABLE_OPENGL)
 bool waylandEGLInit(int w, int h);
 EGLDisplay waylandGetEGLDisplay(void);
-void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count);
+void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+    int count, struct FrameTimes * timings);
 #endif
 
 #ifdef ENABLE_EGL
@@ -261,7 +261,7 @@ bool waylandPollUnregister(int fd);
 
 // presentation module
 bool waylandPresentationInit(void);
-void waylandPresentationFrame(void);
+void waylandPresentationFrame(struct FrameTimes * timings);
 void waylandPresentationFree(void);
 
 // registry module

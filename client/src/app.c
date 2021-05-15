@@ -57,6 +57,16 @@ bool app_isFormatValid(void)
   return g_state.formatValid;
 }
 
+clockid_t app_getClockId(void)
+{
+  return g_state.clkId;
+}
+
+void app_updateClockId(clockid_t clkId)
+{
+  g_state.clkId = clkId;
+}
+
 void app_updateCursorPos(double x, double y)
 {
   g_cursor.pos.x = x;
@@ -464,9 +474,10 @@ EGLNativeWindowType app_getEGLNativeWindow(void)
   return g_state.ds->getEGLNativeWindow();
 }
 
-void app_eglSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count)
+void app_eglSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+    int count, struct FrameTimes * timings)
 {
-  g_state.ds->eglSwapBuffers(display, surface, damage, count);
+  g_state.ds->eglSwapBuffers(display, surface, damage, count, timings);
 }
 #endif
 

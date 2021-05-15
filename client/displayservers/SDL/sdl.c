@@ -255,9 +255,11 @@ static EGLNativeWindowType sdlGetEGLNativeWindow(void)
   }
 }
 
-static void sdlEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count)
+static void sdlEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+    int count, struct FrameTimes * timings)
 {
   eglSwapBuffers(display, surface);
+  free(timings);
 }
 #endif //ENABLE_EGL
 

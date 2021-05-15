@@ -110,6 +110,8 @@ struct Inst
 
   bool               cursorLastValid;
   struct CursorState cursorLast;
+
+  _Atomic(struct FrameTimes *) timings;
 };
 
 static struct Option egl_options[] =
@@ -256,6 +258,7 @@ bool egl_create(void ** opaque, const LG_RendererParams params, bool * needsOpen
   this->screenScaleX = 1.0f;
   this->screenScaleY = 1.0f;
   this->uiScale      = 1.0;
+  atomic_init(&this->timings, NULL);
 
   this->font = LG_Fonts[0];
   if (!egl_update_font(this))
@@ -540,15 +543,21 @@ bool egl_on_frame_format(void * opaque, const LG_RendererFormat format, bool use
   return egl_desktop_setup(this->desktop, format, useDMA);
 }
 
-bool egl_on_frame(void * opaque, const FrameBuffer * frame, int dmaFd)
+bool egl_on_frame(void * opaque, const FrameBuffer * frame, int dmaFd, struct FrameTimes * timings)
 {
   struct Inst * this = (struct Inst *)opaque;
 
   if (!egl_desktop_update(this->desktop, frame, dmaFd))
   {
     DEBUG_INFO("Failed to to update the desktop");
+    free(timings);
     return false;
   }
+
+  if (timings)
+    clock_gettime(app_getClockId(), &timings->imported);
+  struct FrameTimes * oldTimings = atomic_exchange(&this->timings, timings);
+  free(oldTimings);
 
   this->start = true;
   this->cursorLastValid = false;
@@ -864,9 +873,13 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
     }
   }
 
+  struct FrameTimes * timings = atomic_exchange(&this->timings, NULL);
+  if (timings)
+    clock_gettime(app_getClockId(), &timings->rendered);
+
   egl_fps_render(this->fps, this->screenScaleX, this->screenScaleY);
   egl_help_render(this->help, this->screenScaleX, this->screenScaleY);
-  app_eglSwapBuffers(this->display, this->surface, damage, damageIdx);
+  app_eglSwapBuffers(this->display, this->surface, damage, damageIdx, timings);
   return true;
 }
 

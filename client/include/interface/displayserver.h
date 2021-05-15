@@ -83,6 +83,8 @@ typedef void (* LG_ClipboardReplyFn)(void * opaque, const LG_ClipboardData type,
 typedef struct LG_DSGLContext
   * LG_DSGLContext;
 
+struct FrameTimes;
+
 struct LG_DisplayServerOps
 {
   /* called before options are parsed, useful for registering options */
@@ -117,7 +119,8 @@ struct LG_DisplayServerOps
   /* EGL support */
   EGLDisplay (*getEGLDisplay)(void);
   EGLNativeWindowType (*getEGLNativeWindow)(void);
-  void (*eglSwapBuffers)(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count);
+  void (*eglSwapBuffers)(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+      int count, struct FrameTimes * timings);
 #endif
 
 #ifdef ENABLE_OPENGL

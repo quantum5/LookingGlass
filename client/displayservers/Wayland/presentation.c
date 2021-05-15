@@ -26,18 +26,14 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 
 #include <wayland-client.h>
 
+#include "app.h"
 #include "common/debug.h"
 #include "common/time.h"
-
-struct FrameData
-{
-  struct timespec sent;
-};
 
 static void presentationClockId(void * data,
     struct wp_presentation * presentation, uint32_t clkId)
 {
-  wlWm.clkId = clkId;
+  app_updateClockId(clkId);
 }
 
 static const struct wp_presentation_listener presentationListener = {
@@ -54,27 +50,29 @@ static void presentationFeedbackPresented(void * opaque,
     struct wp_presentation_feedback * feedback, uint32_t tvSecHi, uint32_t tvSecLo,
     uint32_t tvNsec, uint32_t refresh, uint32_t seqHi, uint32_t seqLo, uint32_t flags)
 {
-  struct FrameData * data = opaque;
-  struct timespec present = {
-    .tv_sec = (uint64_t) tvSecHi << 32 | tvSecLo,
-    .tv_nsec = tvNsec,
-  };
-  struct timespec delta;
+  struct FrameTimes * timings = opaque;
+  timings->photon.tv_sec = (time_t) tvSecHi << 32 | tvSecLo;
+  timings->photon.tv_nsec = tvNsec;
 
-  tsDiff(&delta, &present, &data->sent);
-  printf("Presented in %3jd.%06lums, vsync: %d, hw_clock: %d, hw_compl: %d, zero_copy: %d\n",
+  struct timespec delta, import, render, photon;
+  tsDiff(&delta, &timings->photon, &timings->received);
+  tsDiff(&photon, &timings->photon, &timings->swapped);
+  tsDiff(&render, &timings->swapped, &timings->imported);
+  tsDiff(&import, &timings->imported, &timings->received);
+
+  printf("Presented in %3jd.%06lums since reception, import:%3jd.%06lums, render:%3jd.%06lums, photon:%3jd.%06lums\n",
       (intmax_t) delta.tv_sec * 1000 + delta.tv_nsec / 1000000, delta.tv_nsec % 1000000,
-      (bool) (flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC),
-      (bool) (flags & WP_PRESENTATION_FEEDBACK_KIND_HW_CLOCK),
-      (bool) (flags & WP_PRESENTATION_FEEDBACK_KIND_HW_COMPLETION),
-      (bool) (flags & WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY));
-  free(data);
+      (intmax_t) import.tv_sec * 1000 + import.tv_nsec / 1000000, import.tv_nsec % 1000000,
+      (intmax_t) render.tv_sec * 1000 + render.tv_nsec / 1000000, render.tv_nsec % 1000000,
+      (intmax_t) photon.tv_sec * 1000 + photon.tv_nsec / 1000000, photon.tv_nsec % 1000000
+  );
+  free(timings);
 }
 
-static void presentationFeedbackDiscarded(void * data,
+static void presentationFeedbackDiscarded(void * opaque,
     struct wp_presentation_feedback * feedback)
 {
-  free(data);
+  free(opaque);
 }
 
 static const struct wp_presentation_feedback_listener presentationFeedbackListener = {
@@ -95,15 +93,9 @@ void waylandPresentationFree(void)
   wp_presentation_destroy(wlWm.presentation);
 }
 
-void waylandPresentationFrame(void)
+void waylandPresentationFrame(struct FrameTimes * timings)
 {
-  struct FrameData * data = malloc(sizeof(struct FrameData));
-  if (clock_gettime(wlWm.clkId, &data->sent))
-  {
-    DEBUG_ERROR("clock_gettime failed: %s\n", strerror(errno));
-    free(data);
-  }
-
+  clock_gettime(app_getClockId(), &timings->swapped);
   struct wp_presentation_feedback * feedback = wp_presentation_feedback(wlWm.presentation, wlWm.surface);
-  wp_presentation_feedback_add_listener(feedback, &presentationFeedbackListener, data);
+  wp_presentation_feedback_add_listener(feedback, &presentationFeedbackListener, timings);
 }

@@ -69,7 +69,8 @@ EGLDisplay waylandGetEGLDisplay(void)
   return eglGetDisplay(native);
 }
 
-void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage, int count)
+void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct Rect * damage,
+    int count, struct FrameTimes * timings)
 {
   if (!wlWm.eglSwapWithDamageInit)
   {
@@ -91,7 +92,8 @@ void waylandEGLSwapBuffers(EGLDisplay display, EGLSurface surface, const struct 
       DEBUG_INFO("Swapping buffers with damage: not supported");
   }
 
-  waylandPresentationFrame();
+  if (timings)
+    waylandPresentationFrame(timings);
 
   if (wlWm.eglSwapWithDamage && count)
   {
@@ -214,6 +216,6 @@ void waylandGLSetSwapInterval(int interval)
 
 void waylandGLSwapBuffers(void)
 {
-  waylandEGLSwapBuffers(wlWm.glDisplay, wlWm.glSurface, NULL, 0);
+  waylandEGLSwapBuffers(wlWm.glDisplay, wlWm.glSurface, NULL, 0, NULL);
 }
 #endif

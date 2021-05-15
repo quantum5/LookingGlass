@@ -941,9 +941,10 @@ static EGLNativeWindowType x11GetEGLNativeWindow(void)
 }
 
 static void x11EGLSwapBuffers(EGLDisplay display, EGLSurface surface,
-    const struct Rect * damage, int count)
+    const struct Rect * damage, int count, struct FrameTimes * timings)
 {
   eglSwapBuffers(display, surface);
+  free(timings);
 }
 #endif
 

@@ -46,6 +46,7 @@ struct AppState
 
   struct LG_DisplayServerOps * ds;
   bool                         dsInitialized;
+  clockid_t                    clkId;
 
   bool                 stopVideo;
   bool                 ignoreInput;
