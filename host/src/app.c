@@ -240,6 +240,9 @@ static int frameThread(void * opaque)
     fi->blockScreensaver  = os_blockScreensaver();
     frameValid            = true;
 
+    fi->damageRectsCount  = frame.damageRectsCount;
+    memcpy(fi->damageRects, frame.damageRects, frame.damageRectsCount * sizeof(FrameDamageRect));
+
     // put the framebuffer on the border of the next page
     // this is to allow for aligned DMA transfers by the receiver
     FrameBuffer * fb = (FrameBuffer *)(((uint8_t*)fi) + fi->offset);
