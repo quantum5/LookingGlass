@@ -111,6 +111,6 @@ typedef struct CaptureInterface
 
   CaptureResult (*capture   )();
   CaptureResult (*waitFrame )(CaptureFrame * frame, const size_t maxFrameSize);
-  CaptureResult (*getFrame  )(FrameBuffer  * frame, const unsigned int height);
+  CaptureResult (*getFrame  )(FrameBuffer  * frame, const unsigned int height, int frameIndex);
 }
 CaptureInterface;

@@ -254,7 +254,8 @@ static int frameThread(void * opaque)
       DEBUG_ERROR("%s", lgmpStatusString(status));
       continue;
     }
-    app.iface->getFrame(fb, frame.height);
+
+    app.iface->getFrame(fb, frame.height, app.frameIndex);
   }
   DEBUG_INFO("Frame thread stopped");
   return 0;
