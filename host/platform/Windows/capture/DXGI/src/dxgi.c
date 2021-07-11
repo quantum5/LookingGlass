@@ -1026,7 +1026,7 @@ static CaptureResult dxgi_waitFrame(CaptureFrame * frame, const size_t maxFrameS
 }
 
 static CaptureResult dxgi_getFrame(FrameBuffer * frame,
-    const unsigned int height)
+    const unsigned int height, int frameIndex)
 {
   assert(this);
   assert(this->initialized);
