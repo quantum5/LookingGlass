@@ -118,6 +118,7 @@ struct Inst
   bool               cursorLastValid;
   struct CursorState cursorLast;
 
+  bool                            hadOverlay;
   _Atomic(struct DesktopDamage *) desktopDamage;
 };
 
@@ -810,6 +811,7 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
 
   bool hasLastCursor = this->cursorLastValid;
   bool cursorRendered = false;
+  bool hasOverlay = false;
   struct CursorState cursorState;
   struct DesktopDamage * desktopDamage = NULL;
 
@@ -856,12 +858,15 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
     }
 
     if (!this->waitDone)
+    {
       egl_splash_render(this->splash, a, this->splashRatio);
+      hasOverlay = true;
+    }
   }
-  else
+  else if (!this->start)
   {
-    if (!this->start)
-      egl_splash_render(this->splash, 1.0f, this->splashRatio);
+    egl_splash_render(this->splash, 1.0f, this->splashRatio);
+    hasOverlay = true;
   }
 
   if (this->showAlert)
@@ -878,13 +883,19 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
       this->cursorLastValid = false;
     }
     else
+    {
       egl_alert_render(this->alert, this->screenScaleX, this->screenScaleY);
+      hasOverlay = true;
+    }
   }
+
+  hasOverlay |= egl_fps_render(this->fps, this->screenScaleX, this->screenScaleY);
+  hasOverlay |= egl_help_render(this->help, this->screenScaleX, this->screenScaleY);
 
   struct Rect damage[KVMFR_MAX_DAMAGE_RECTS + 2];
   int damageIdx = 0;
 
-  if (this->waitDone)
+  if (!hasOverlay && !this->hadOverlay)
   {
     if (cursorRendered && hasLastCursor)
     {
@@ -931,9 +942,8 @@ bool egl_render(void * opaque, LG_RendererRotate rotate)
       }
     }
   }
+  this->hadOverlay = hasOverlay;
 
-  egl_fps_render(this->fps, this->screenScaleX, this->screenScaleY);
-  egl_help_render(this->help, this->screenScaleX, this->screenScaleY);
   app_eglSwapBuffers(this->display, this->surface, damage, damageIdx);
   return true;
 }
