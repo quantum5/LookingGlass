@@ -461,6 +461,98 @@ static CaptureResult nvfbc_waitFrame(CaptureFrame * frame,
   return CAPTURE_RESULT_OK;
 }
 
+inline static void rectCopyAligned(uint8_t * dest, const uint8_t * src, int ystart,
+    int yend, int dx, int stride, int width)
+{
+  const int cols = width / 16;
+  assert(width % 16 == 0);
+  assert((yend - ystart) % 16 == 0);
+
+  for (int i = ystart; i < yend; i += 16)
+  {
+    unsigned int offset0  = (i +  0) * stride + dx;
+    unsigned int offset1  = (i +  1) * stride + dx;
+    unsigned int offset2  = (i +  2) * stride + dx;
+    unsigned int offset3  = (i +  3) * stride + dx;
+    unsigned int offset4  = (i +  4) * stride + dx;
+    unsigned int offset5  = (i +  5) * stride + dx;
+    unsigned int offset6  = (i +  6) * stride + dx;
+    unsigned int offset7  = (i +  7) * stride + dx;
+    unsigned int offset8  = (i +  8) * stride + dx;
+    unsigned int offset9  = (i +  9) * stride + dx;
+    unsigned int offset10 = (i + 10) * stride + dx;
+    unsigned int offset11 = (i + 11) * stride + dx;
+    unsigned int offset12 = (i + 12) * stride + dx;
+    unsigned int offset13 = (i + 13) * stride + dx;
+    unsigned int offset14 = (i + 14) * stride + dx;
+    unsigned int offset15 = (i + 15) * stride + dx;
+
+    for (int j = 0; j < cols; ++j)
+    {
+      __m128i xmm0  = _mm_stream_load_si128((__m128i *)(src + offset0));
+      __m128i xmm1  = _mm_stream_load_si128((__m128i *)(src + offset1));
+      __m128i xmm2  = _mm_stream_load_si128((__m128i *)(src + offset2));
+      __m128i xmm3  = _mm_stream_load_si128((__m128i *)(src + offset3));
+      __m128i xmm4  = _mm_stream_load_si128((__m128i *)(src + offset4));
+      __m128i xmm5  = _mm_stream_load_si128((__m128i *)(src + offset5));
+      __m128i xmm6  = _mm_stream_load_si128((__m128i *)(src + offset6));
+      __m128i xmm7  = _mm_stream_load_si128((__m128i *)(src + offset7));
+      __m128i xmm8  = _mm_stream_load_si128((__m128i *)(src + offset8));
+      __m128i xmm9  = _mm_stream_load_si128((__m128i *)(src + offset9));
+      __m128i xmm10 = _mm_stream_load_si128((__m128i *)(src + offset10));
+      __m128i xmm11 = _mm_stream_load_si128((__m128i *)(src + offset11));
+      __m128i xmm12 = _mm_stream_load_si128((__m128i *)(src + offset12));
+      __m128i xmm13 = _mm_stream_load_si128((__m128i *)(src + offset13));
+      __m128i xmm14 = _mm_stream_load_si128((__m128i *)(src + offset14));
+      __m128i xmm15 = _mm_stream_load_si128((__m128i *)(src + offset15));
+
+      _mm_store_si128((__m128i *)(dest + offset0),  xmm0);
+      _mm_store_si128((__m128i *)(dest + offset1),  xmm1);
+      _mm_store_si128((__m128i *)(dest + offset2),  xmm2);
+      _mm_store_si128((__m128i *)(dest + offset3),  xmm3);
+      _mm_store_si128((__m128i *)(dest + offset4),  xmm4);
+      _mm_store_si128((__m128i *)(dest + offset5),  xmm5);
+      _mm_store_si128((__m128i *)(dest + offset6),  xmm6);
+      _mm_store_si128((__m128i *)(dest + offset7),  xmm7);
+      _mm_store_si128((__m128i *)(dest + offset8),  xmm8);
+      _mm_store_si128((__m128i *)(dest + offset9),  xmm9);
+      _mm_store_si128((__m128i *)(dest + offset10), xmm10);
+      _mm_store_si128((__m128i *)(dest + offset11), xmm11);
+      _mm_store_si128((__m128i *)(dest + offset12), xmm12);
+      _mm_store_si128((__m128i *)(dest + offset13), xmm13);
+      _mm_store_si128((__m128i *)(dest + offset14), xmm14);
+      _mm_store_si128((__m128i *)(dest + offset15), xmm15);
+
+      offset0  += 16;
+      offset1  += 16;
+      offset2  += 16;
+      offset3  += 16;
+      offset4  += 16;
+      offset5  += 16;
+      offset6  += 16;
+      offset7  += 16;
+      offset8  += 16;
+      offset9  += 16;
+      offset10 += 16;
+      offset11 += 16;
+      offset12 += 16;
+      offset13 += 16;
+      offset14 += 16;
+      offset15 += 16;
+    }
+  }
+}
+
+inline static void rectCopyUnaligned(uint8_t * dest, uint8_t * src, int ystart,
+    int yend, int dx, int stride, int width)
+{
+  for (int i = ystart; i < yend; ++i)
+  {
+    unsigned int offset = i * stride + dx;
+    memcpy(dest + offset, src + offset, width);
+  }
+}
+
 static CaptureResult nvfbc_getFrame(FrameBuffer * frame,
     const unsigned int height, int frameIndex)
 {
@@ -490,12 +582,13 @@ static CaptureResult nvfbc_getFrame(FrameBuffer * frame,
         while (x2 < w && ((!wasFresh && info->diffMap[y * w + x2]) || this->diffMap[y * w + x2]))
           ++x2;
 
-        unsigned int width = (min(x2 * 128, this->grabWidth) - x * 128) * 4;
-        for (int i = ystart; i < yend; ++i)
-        {
-          unsigned int offset = (i * this->grabStride + x * 128) * 4;
-          memcpy(frameData + offset, this->frameBuffer + offset, width);
-        }
+        unsigned int width = (min(x2 * 128, this->grabStride) - x * 128) * 4;
+        rectCopyUnaligned(frameData, this->frameBuffer, ystart, yend & ~0xF, x * 512,
+            this->grabStride * 4, width);
+
+        if (__builtin_expect(yend & 0xF, 0))
+          rectCopyUnaligned(frameData, this->frameBuffer, yend & ~0xF, yend, x * 512,
+            this->grabStride * 4, width);
 
         x = x2;
       }
