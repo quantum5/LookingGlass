@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 3.0)
 project(looking-glass-host C)
 
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "compiler flags" FORCE)
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "compiler flags" FORCE)
+if (MSVC)
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-Ox -Zi -DNDEBUG" CACHE STRING "compiler flags" FORCE)
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-Ox -Zi -DNDEBUG" CACHE STRING "compiler flags" FORCE)
+else()
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "compiler flags" FORCE)
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG" CACHE STRING "compiler flags" FORCE)
+endif()
 
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/")
 
@@ -31,15 +36,27 @@ endif()
 option(ENABLE_BACKTRACE "Enable backtrace support on crash" ON)
 add_feature_info(ENABLE_BACKTRACE ENABLE_BACKTRACE "Backtrace support.")
 
-add_compile_options(
-  "-Wall"
-  "-Werror"
-  "-Wfatal-errors"
-  "-ffast-math"
-  "-fdata-sections"
-  "-ffunction-sections"
-  "$<$<CONFIG:DEBUG>:-O0;-g3;-ggdb>"
-)
+if (MSVC)
+  add_compile_options(
+    "-W3"
+    "-Wv:18"
+    "-WX"
+    "-fp:fast"
+    "-Gy"
+    "-Gw"
+    "$<$<CONFIG:DEBUG>:-Od>"
+  )
+else()
+  add_compile_options(
+    "-Wall"
+    "-Werror"
+    "-Wfatal-errors"
+    "-ffast-math"
+    "-fdata-sections"
+    "-ffunction-sections"
+    "$<$<CONFIG:DEBUG>:-O0;-g3;-ggdb>"
+  )
+endif()
 set(CMAKE_C_STANDARD  11)
 
 get_filename_component(PROJECT_TOP "${PROJECT_SOURCE_DIR}/.." ABSOLUTE)
