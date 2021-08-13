@@ -37,6 +37,8 @@
 #include <dxgi1_2.h>
 #include <dxgi1_5.h>
 #include <d3d11.h>
+#include <d3d11_3.h>
+#include <d3d11_4.h>
 #include <d3dcommon.h>
 #include <versionhelpers.h>
 
@@ -56,6 +58,9 @@ typedef struct Texture
   unsigned int               formatVer;
   volatile enum TextureState state;
   ID3D11Texture2D          * tex;
+  ID3D11Fence              * fence;
+  UINT64                     fenceValue;
+  HANDLE                     event;
   D3D11_MAPPED_SUBRESOURCE   map;
   uint64_t                   copyTime;
   uint32_t                   damageRectsCount;
@@ -84,6 +89,7 @@ struct iface
   IDXGIOutput              * output;
   ID3D11Device             * device;
   ID3D11DeviceContext      * deviceContext;
+  ID3D11DeviceContext4     * deviceContext4;
   LG_Lock                    deviceContextLock;
   bool                       useAcquireLock;
   D3D_FEATURE_LEVEL          featureLevel;
@@ -200,6 +206,7 @@ static bool dxgi_create(CaptureGetPointerBuffer getPointerBufferFn, CapturePostP
 
 static bool dxgi_init(void)
 {
+  ID3D11Device5 * device5 = NULL;
   assert(this);
 
   this->desktop = OpenInputDesktop(0, FALSE, GENERIC_READ);
@@ -544,6 +551,18 @@ static bool dxgi_init(void)
       goto fail;
   }
 
+  if (SUCCEEDED(ID3D11DeviceContext_QueryInterface(this->deviceContext,
+      &IID_ID3D11DeviceContext4, (void **)&this->deviceContext4)))
+  {
+    if (FAILED(ID3D11Device_QueryInterface(this->device, &IID_ID3D11Device5, (void **)&device5)))
+    {
+      device5 = NULL;
+      DEBUG_WARN("ID3D11Device5 not supported, cannot use fence optimization");
+    }
+  }
+  else
+    DEBUG_WARN("ID3D11DeviceContext4 not supported, cannot use fence optimization");
+
   D3D11_TEXTURE2D_DESC texDesc;
   memset(&texDesc, 0, sizeof(texDesc));
   texDesc.Width              = this->width;
@@ -560,12 +579,37 @@ static bool dxgi_init(void)
 
   for (int i = 0; i < this->maxTextures; ++i)
   {
-    this->texture[i].texDamageCount = -1;
     status = ID3D11Device_CreateTexture2D(this->device, &texDesc, NULL, &this->texture[i].tex);
     if (FAILED(status))
     {
       DEBUG_WINERROR("Failed to create texture", status);
       goto fail;
+    }
+
+    if (device5)
+    {
+      status = ID3D11Device5_CreateFence(device5, 0, D3D11_FENCE_FLAG_NONE,
+        &IID_ID3D11Fence, (void **)&this->texture[i].fence);
+      if (SUCCEEDED(status))
+      {
+        this->texture[i].fenceValue = 0;
+        this->texture[i].event = CreateEvent(NULL, FALSE, FALSE, NULL);
+        if (!this->texture[i].event)
+        {
+          DEBUG_WINERROR("Failed to create texture event", GetLastError());
+          DEBUG_WARN("Cannot use fence optimization");
+          ID3D11Device5_Release(device5);
+          device5 = NULL;
+        }
+      }
+      else
+      {
+        DEBUG_WINERROR("Failed to create texture fence", status);
+        DEBUG_WARN("Cannot use fence optimization");
+        ID3D11Device5_Release(device5);
+        this->texture[i].fence = NULL;
+        device5 = NULL;
+      }
     }
   }
 
@@ -581,6 +625,29 @@ static bool dxgi_init(void)
   this->stride = mapping.RowPitch / bpp;
   ID3D11DeviceContext_Unmap(this->deviceContext, (ID3D11Resource *)this->texture[0].tex, 0);
 
+  for (int i = 0; i < this->maxTextures; ++i)
+  {
+    this->texture[i].texDamageCount = -1;
+
+    if (!device5)
+    {
+      if (this->texture[i].fence)
+      {
+        ID3D11Fence_Release(this->texture[i].fence);
+        this->texture[i].fence = NULL;
+      }
+
+      if (this->texture[i].event)
+      {
+        CloseHandle(this->texture[i].event);
+        this->texture[i].event = NULL;
+      }
+    }
+  }
+
+  if (device5)
+    ID3D11Device5_Release(device5);
+
   for (int i = 0; i < LGMP_Q_FRAME_LEN; ++i)
     this->frameDamage[i].count = -1;
 
@@ -590,6 +657,8 @@ static bool dxgi_init(void)
   return true;
 
 fail:
+  if (device5)
+    ID3D11Device5_Release(device5);
   dxgi_deinit();
   return false;
 }
@@ -617,6 +686,18 @@ static bool dxgi_deinit(void)
     {
       ID3D11Texture2D_Release(this->texture[i].tex);
       this->texture[i].tex = NULL;
+    }
+
+    if (this->texture[i].fence)
+    {
+      ID3D11Fence_Release(this->texture[i].fence);
+      this->texture[i].fence = NULL;
+    }
+
+    if (this->texture[i].event)
+    {
+      CloseHandle(this->texture[i].event);
+      this->texture[i].event = NULL;
     }
   }
 
@@ -860,8 +941,7 @@ static CaptureResult dxgi_capture(void)
   if (copyFrame || copyPointer)
   {
     DXGI_OUTDUPL_POINTER_SHAPE_INFO shapeInfo;
-    LOCKED(
-    {
+    LOCKED({
       if (copyFrame)
       {
         computeFrameDamage(tex);
@@ -906,6 +986,29 @@ static CaptureResult dxgi_capture(void)
       }
 
       ID3D11DeviceContext_Flush(this->deviceContext);
+
+      if (copyFrame)
+      {
+        if (tex->fence)
+        {
+          DEBUG_INFO("Using fences");
+          status = ID3D11DeviceContext4_Signal(this->deviceContext4, tex->fence, ++tex->fenceValue);
+          if (SUCCEEDED(status))
+          {
+            status = ID3D11Fence_SetEventOnCompletion(tex->fence, tex->fenceValue, tex->event);
+            if (FAILED(status))
+            {
+              DEBUG_WINERROR("Failed to set fence completion event", status);
+              SetEvent(tex->event);
+            }
+          }
+          else
+          {
+            DEBUG_WINERROR("Failed to set fence for signalling", status);
+            SetEvent(tex->event);
+          }
+        }
+      }
     });
 
     if (copyFrame)
@@ -1008,6 +1111,7 @@ static CaptureResult dxgi_capture(void)
 
 static CaptureResult dxgi_waitFrame(CaptureFrame * frame, const size_t maxFrameSize)
 {
+  HRESULT status;
   assert(this);
   assert(this->initialized);
 
@@ -1024,38 +1128,59 @@ static CaptureResult dxgi_waitFrame(CaptureFrame * frame, const size_t maxFrameS
 
   Texture * tex = &this->texture[this->texRIndex];
 
-  // sleep until it's close to time to map
-  const uint64_t delta = microtime() - tex->copyTime;
-  if (delta < this->usleepMapTime)
-    usleep(this->usleepMapTime - delta);
-
-  // try to map the resource, but don't wait for it
-  for (int i = 0; ; ++i)
+  if (tex->fence)
   {
-    HRESULT status;
-    LOCKED({status = ID3D11DeviceContext_Map(this->deviceContext, (ID3D11Resource*)tex->tex, 0, D3D11_MAP_READ, 0x100000L, &tex->map);});
-    if (status == DXGI_ERROR_WAS_STILL_DRAWING)
-    {
-      if (i == 100)
-        return CAPTURE_RESULT_TIMEOUT;
-
-      usleep(1);
-      continue;
-    }
+    WaitForSingleObject(tex->fence, INFINITE);
+    DEBUG_INFO("Fence finished in %I64d μs", microtime() - tex->copyTime);
+    LOCKED({
+      DEBUG_INFO("Entered lock in %I64d μs", microtime() - tex->copyTime);
+      status = ID3D11DeviceContext_Map(this->deviceContext, (ID3D11Resource*)tex->tex, 0, D3D11_MAP_READ, 0, &tex->map);
+    });
 
     if (FAILED(status))
     {
       DEBUG_WINERROR("Failed to map the texture", status);
       return CAPTURE_RESULT_ERROR;
     }
+  }
+  else
+  {
+    // sleep until it's close to time to map
+    const uint64_t delta = microtime() - tex->copyTime;
+    if (delta < this->usleepMapTime)
+      usleep(this->usleepMapTime - delta);
 
-    break;
+    // try to map the resource, but don't wait for it
+    for (int i = 0; ; ++i)
+    {
+      LOCKED({status = ID3D11DeviceContext_Map(this->deviceContext, (ID3D11Resource*)tex->tex, 0, D3D11_MAP_READ, 0x100000L, &tex->map);});
+      if (status == DXGI_ERROR_WAS_STILL_DRAWING)
+      {
+        if (i == 100)
+        {
+          DEBUG_INFO("Timeout");
+          return CAPTURE_RESULT_TIMEOUT;
+        }
+
+        usleep(1);
+        continue;
+      }
+
+      if (FAILED(status))
+      {
+        DEBUG_WINERROR("Failed to map the texture", status);
+        return CAPTURE_RESULT_ERROR;
+      }
+
+      break;
+    }
+
+    // update the sleep average and sleep for 80% of the average on the next call
+    runningavg_push(this->avgMapTime, microtime() - tex->copyTime);
+    this->usleepMapTime = (uint64_t)(runningavg_calc(this->avgMapTime) * 0.8);
   }
 
-  // update the sleep average and sleep for 80% of the average on the next call
-  runningavg_push(this->avgMapTime, microtime() - tex->copyTime);
-  this->usleepMapTime = (uint64_t)(runningavg_calc(this->avgMapTime) * 0.8);
-
+  DEBUG_INFO("Copy finished in %I64d μs", microtime() - tex->copyTime);
   tex->state = TEXTURE_STATE_MAPPED;
 
   const unsigned int maxHeight = maxFrameSize / this->pitch;
