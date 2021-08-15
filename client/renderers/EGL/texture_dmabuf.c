@@ -91,7 +91,7 @@ static bool egl_texDMABUFSetup(EGL_Texture * texture, const EGL_TexSetup * setup
 
   egl_texDMABUFCleanup(this);
 
-  return egl_texBufferSetup(&parent->base, setup);
+  return egl_texBufferSetupInternal(&parent->base, setup, false);
 }
 
 static bool egl_texDMABUFUpdate(EGL_Texture * texture,

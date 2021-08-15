@@ -78,7 +78,8 @@ void egl_texBufferFree(EGL_Texture * texture)
     free(this);
 }
 
-bool egl_texBufferSetup(EGL_Texture * texture, const EGL_TexSetup * setup)
+bool egl_texBufferSetupInternal(EGL_Texture * texture, const EGL_TexSetup * setup,
+    bool allocate)
 {
   TextureBuffer * this = UPCAST(TextureBuffer, texture);
 
@@ -88,21 +89,42 @@ bool egl_texBufferSetup(EGL_Texture * texture, const EGL_TexSetup * setup)
   for(int i = 0; i < this->texCount; ++i)
   {
     glBindTexture(GL_TEXTURE_2D, this->tex[i]);
-    glTexImage2D(GL_TEXTURE_2D,
-        0,
+    if (allocate)
+    {
+      if (this->bgraSwizzle)
+      {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+      }
+
+      glTexStorage2D(GL_TEXTURE_2D,
+        1,
         texture->format.intFormat,
         texture->format.width,
-        texture->format.height,
-        0,
-        texture->format.format,
-        texture->format.dataType,
-        NULL);
+        texture->format.height);
+    }
   }
 
   glBindTexture(GL_TEXTURE_2D, 0);
   this->rIndex = -1;
 
   return true;
+}
+
+bool egl_texBufferSetup(EGL_Texture * texture, const EGL_TexSetup * setup)
+{
+  TextureBuffer * this = UPCAST(TextureBuffer, texture);
+
+  if (texture->format.pixFmt == EGL_PF_BGRA)
+  {
+    texture->format.pixFmt = EGL_PF_RGBA;
+    texture->format.format = GL_RGBA;
+    this->bgraSwizzle = true;
+  }
+  else
+    this->bgraSwizzle = false;
+
+  return egl_texBufferSetupInternal(texture, setup, true);
 }
 
 static bool egl_texBufferUpdate(EGL_Texture * texture, const EGL_TexUpdate * update)

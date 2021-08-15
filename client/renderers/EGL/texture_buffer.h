@@ -31,6 +31,7 @@ typedef struct TextureBuffer
   EGL_Texture base;
   bool free;
 
+  bool          bgraSwizzle;
   int           texCount;
   GLuint        tex[EGL_TEX_BUFFER_MAX];
   GLuint        sampler;
@@ -45,6 +46,8 @@ TextureBuffer;
 
 bool egl_texBufferInit(EGL_Texture ** texture_, EGLDisplay * display);
 void egl_texBufferFree(EGL_Texture * texture_);
+bool egl_texBufferSetupInternal(EGL_Texture * texture, const EGL_TexSetup * setup,
+    bool allocate);
 bool egl_texBufferSetup(EGL_Texture * texture_, const EGL_TexSetup * setup);
 EGL_TexStatus egl_texBufferProcess(EGL_Texture * texture_);
 EGL_TexStatus egl_texBufferGet(EGL_Texture * texture_, GLuint * tex);

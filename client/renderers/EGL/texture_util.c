@@ -45,7 +45,7 @@ bool egl_texUtilGetFormat(const EGL_TexSetup * setup, EGL_TexFormat * fmt)
     case EGL_PF_BGRA:
       fmt->bpp        = 4;
       fmt->format     = GL_BGRA_EXT;
-      fmt->intFormat  = GL_BGRA_EXT;
+      fmt->intFormat  = GL_RGBA8;
       fmt->dataType   = GL_UNSIGNED_BYTE;
       fmt->fourcc     = DRM_FORMAT_ARGB8888;
       break;
@@ -53,7 +53,7 @@ bool egl_texUtilGetFormat(const EGL_TexSetup * setup, EGL_TexFormat * fmt)
     case EGL_PF_RGBA:
       fmt->bpp        = 4;
       fmt->format     = GL_RGBA;
-      fmt->intFormat  = GL_RGBA;
+      fmt->intFormat  = GL_RGBA8;
       fmt->dataType   = GL_UNSIGNED_BYTE;
       fmt->fourcc     = DRM_FORMAT_ABGR8888;
       break;
