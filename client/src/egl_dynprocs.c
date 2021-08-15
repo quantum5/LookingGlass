@@ -40,6 +40,12 @@ void egl_dynProcsInit(void)
     eglGetProcAddress("glDebugMessageCallback");
   g_egl_dynProcs.glDebugMessageCallbackKHR = (glDebugMessageCallback_t)
     eglGetProcAddress("glDebugMessageCallbackKHR");
+  g_egl_dynProcs.glBindImageTexture = (glBindImageTexture_t)
+    eglGetProcAddress("glBindImageTexture");
+  g_egl_dynProcs.glDispatchCompute = (glDispatchCompute_t)
+    eglGetProcAddress("glDispatchCompute");
+  g_egl_dynProcs.glMemoryBarrier = (glMemoryBarrier_t)
+    eglGetProcAddress("glMemoryBarrier");
 };
 
 #endif
