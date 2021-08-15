@@ -25,16 +25,20 @@
 #include "common/debug.h"
 #include "common/option.h"
 #include "cimgui.h"
+#include "egl_dynprocs.h"
 #include "ffx.h"
+#include <GLES3/gl31.h>
 
 #include "basic.vert.h"
 #include "ffx_cas.frag.h"
+#include "ffx_cas.comp.h"
 
 typedef struct EGL_FilterFFXCAS
 {
   EGL_Filter base;
 
   EGL_Shader * shader;
+  bool         compute;
   bool         enable;
 
   enum EGL_PixelFormat pixFmt;
@@ -94,7 +98,19 @@ static bool egl_filterFFXCASInit(EGL_Filter ** filter)
     goto error_this;
   }
 
-  if (!egl_shaderCompile(this->shader,
+  if (egl_shaderHasCompute())
+  {
+    this->compute = true;
+
+    if (!egl_shaderCompileCompute(this->shader,
+        b_shader_ffx_cas_comp, b_shader_ffx_cas_comp_size))
+    {
+      DEBUG_ERROR("Failed to compile the compute shader");
+      this->compute = false;
+    }
+  }
+
+  if (!this->compute && !egl_shaderCompile(this->shader,
         b_shader_basic_vert  , b_shader_basic_vert_size,
         b_shader_ffx_cas_frag, b_shader_ffx_cas_frag_size)
      )
@@ -246,6 +262,18 @@ static GLuint egl_filterFFXCASRun(EGL_Filter * filter, EGL_Model * model,
     GLuint texture)
 {
   EGL_FilterFFXCAS * this = UPCAST(EGL_FilterFFXCAS, filter);
+
+  if (this->compute)
+  {
+    GLuint output = egl_framebufferGetTexture(this->fb);
+    g_egl_dynProcs.glBindImageTexture(0, texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+    g_egl_dynProcs.glBindImageTexture(1, output, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+    egl_shaderUse(this->shader);
+    g_egl_dynProcs.glDispatchCompute((this->width + 15) >> 4, (this->height + 15) >> 4, 1);
+    g_egl_dynProcs.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    return output;
+  }
 
   egl_framebufferBind(this->fb);
 
