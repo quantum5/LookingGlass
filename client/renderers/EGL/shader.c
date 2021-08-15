@@ -20,11 +20,15 @@
 
 #include "shader.h"
 #include "common/debug.h"
+#include "egldebug.h"
 #include "util.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+// From GLES 3.1
+#define GL_COMPUTE_SHADER 0x91B9
 
 struct EGL_Shader
 {
@@ -190,6 +194,88 @@ bool egl_shaderCompile(EGL_Shader * this, const char * vertex_code,
   glDeleteShader(fragmentShader);
   glDeleteShader(vertexShader  );
 
+  this->hasShader = true;
+  return true;
+}
+
+bool egl_shaderHasCompute(void)
+{
+  GLint esMaj, esMin;
+  glGetIntegerv(GL_MAJOR_VERSION, &esMaj);
+  glGetIntegerv(GL_MINOR_VERSION, &esMin);
+  return esMaj > 3 || (esMaj == 3 && esMin >= 1);
+}
+
+bool egl_shaderCompileCompute(EGL_Shader * this, const char * code, size_t size)
+{
+  if (this->hasShader)
+  {
+    glDeleteProgram(this->shader);
+    this->hasShader = false;
+  }
+
+  GLint  length;
+  GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+
+  if (!shader)
+  {
+    DEBUG_GL_ERROR("glCreateShader failed (compute shader not supported)");
+    return false;
+  }
+
+  length = size;
+  glShaderSource(shader, 1, &code, &length);
+  glCompileShader(shader);
+
+  GLint result = GL_FALSE;
+  glGetShaderiv(shader, GL_COMPILE_STATUS, &result);
+  if (result == GL_FALSE)
+  {
+    DEBUG_ERROR("Failed to compile compute shader");
+
+    int logLength;
+    glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 0)
+    {
+      char *log = malloc(logLength + 1);
+      glGetShaderInfoLog(shader, logLength, NULL, log);
+      log[logLength] = 0;
+      DEBUG_ERROR("%s", log);
+      free(log);
+    }
+
+    glDeleteShader(shader);
+    return false;
+  }
+
+  this->shader = glCreateProgram();
+  glAttachShader(this->shader, shader);
+  glLinkProgram(this->shader);
+
+  glGetProgramiv(this->shader, GL_LINK_STATUS, &result);
+  if (result == GL_FALSE)
+  {
+    DEBUG_ERROR("Failed to link compute shader program");
+
+    int logLength;
+    glGetProgramiv(this->shader, GL_INFO_LOG_LENGTH, &logLength);
+    if (logLength > 0)
+    {
+      char *log = malloc(logLength + 1);
+      glGetProgramInfoLog(this->shader, logLength, NULL, log);
+      log[logLength] = 0;
+      DEBUG_ERROR("%s", log);
+      free(log);
+    }
+
+    glDetachShader(this->shader, shader);
+    glDeleteShader(shader);
+    glDeleteProgram(this->shader);
+    return false;
+  }
+
+  glDetachShader(this->shader, shader);
+  glDeleteShader(shader);
   this->hasShader = true;
   return true;
 }
