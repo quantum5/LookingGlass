@@ -178,7 +178,7 @@ jobs:
     - name: Build IDD
       run: |
         cd idd
-        msbuild.exe LGIdd.sln /t:Build /p:Configuration=Release /p:Platform=x64
+        msbuild.exe LGIdd.sln /t:Build /p:Configuration=Release /p:Platform=x64 /p:CL_MPCount="$([Environment]::ProcessorCount)"
     - name: Build NSIS Installer
       run: |
         cd idd\x64\Release\LGIdd
