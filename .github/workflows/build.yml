@@ -12,7 +12,7 @@ jobs:
         wayland_shell: [xdg-shell, libdecor]
         build_type: [Release, Debug]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Update apt
@@ -57,7 +57,7 @@ jobs:
   module:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Build kernel module
@@ -68,7 +68,7 @@ jobs:
   host-linux:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Update apt
@@ -91,7 +91,7 @@ jobs:
   host-windows-cross:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Update apt
@@ -122,7 +122,7 @@ jobs:
   host-windows-native:
     runs-on: windows-2025
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Install NSIS
@@ -164,7 +164,7 @@ jobs:
   idd:
     runs-on: windows-2022
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Add msbuild to PATH
@@ -186,7 +186,7 @@ jobs:
       matrix:
         cc: [gcc, clang]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         submodules: recursive
     - name: Update apt
